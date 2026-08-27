@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notariza tu documento — Firmaza</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header class="nav">
+  <div class="container nav-inner">
+    <a href="/" class="brand" style="text-decoration:none"><span class="dot"></span>Firmaza<small>Notarios de confianza, en tu idioma</small></a>
+    <div class="nav-cta"><span class="status-pill" id="sessionPill">Sesión nueva</span></div>
+  </div>
+</header>
+
+<div class="app-shell">
+  <div class="progress">
+    <div class="seg" data-step="0"></div>
+    <div class="seg" data-step="1"></div>
+    <div class="seg" data-step="2"></div>
+    <div class="seg" data-step="3"></div>
+    <div class="seg" data-step="4"></div>
+  </div>
+
+  <!-- Paso 0: datos + documento -->
+  <div class="card step-panel" data-step="0">
+    <h2>1. Sube tu documento</h2>
+    <p class="help">Acepta PDF, DOC o DOCX. Este archivo solo lo verá tu notario durante la sesión.</p>
+    <div class="field">
+      <label>Nombre completo</label>
+      <input type="text" id="signerName" placeholder="Como aparece en tu identificación">
+    </div>
+    <div class="field">
+      <label>Correo electrónico</label>
+      <input type="email" id="signerEmail" placeholder="tucorreo@ejemplo.com">
+    </div>
+    <div class="dropzone" id="dropzone">
+      <div id="dropzoneText">📄 Arrastra tu documento aquí o haz clic para elegir un archivo</div>
+      <input type="file" id="fileInput" accept=".pdf,.doc,.docx" style="display:none">
+    </div>
+    <br>
+    <button class="btn btn-primary btn-block btn-lg" id="toStep1">Continuar</button>
+  </div>
+
+  <!-- Paso 1: verificación de identidad -->
+  <div class="card step-panel" data-step="1" style="display:none">
+    <h2>2. Verifica tu identidad</h2>
+    <p class="help">Este paso protege tu documento contra fraude. Tus datos se comparten únicamente con el notario que te atienda.</p>
+    <div class="row2">
+      <div class="field"><label>Tipo de identificación</label>
+        <select id="idType"><option>Licencia de conducir</option><option>Pasaporte</option><option>ID estatal</option><option>Matrícula consular</option></select>
+      </div>
+      <div class="field"><label>Número de identificación</label><input type="text" id="idNumber" placeholder="•••• 1234"></div>
+    </div>
+    <div class="field"><label>Fecha de nacimiento</label><input type="date" id="dob"></div>
+    <div class="note-box" id="idvNote">Verificando modo de identidad disponible…</div>
+    <br>
+    <button class="btn btn-primary btn-block btn-lg" id="toStep2">Continuar a pago</button>
+  </div>
+
+  <!-- Paso 2: pago -->
+  <div class="card step-panel" data-step="2" style="display:none">
+    <h2>3. Confirma tu pago</h2>
+    <div class="summary-row"><span>Primer sello notarial</span><strong>$25.00</strong></div>
+    <div class="summary-row"><span>Total</span><strong id="totalAmount">$25.00</strong></div>
+    <p class="help" id="paymentNote"></p>
+    <br>
+    <button class="btn btn-primary btn-block btn-lg" id="toStep3">Pagar y continuar</button>
+  </div>
+
+  <!-- Paso 3: video con notario -->
+  <div class="card step-panel" data-step="3" style="display:none">
+    <h2>4. Conéctate con tu notario</h2>
+    <p class="help">Te estamos conectando con un notario disponible. Permite el acceso a tu cámara y micrófono.</p>
+    <div class="video-wrap">
+      <div><video id="localVideo" autoplay muted playsinline></video><div class="center" style="font-size:12px;color:var(--gray);margin-top:4px">Tú</div></div>
+      <div><video id="remoteVideo" autoplay playsinline></video><div class="center" style="font-size:12px;color:var(--gray);margin-top:4px">Notario</div></div>
+    </div>
+    <br>
+    <div class="center"><span class="status-pill" id="callStatus">Conectando…</span></div>
+    <br>
+    <button class="btn btn-primary btn-block btn-lg" id="toStep4">El notario verificó mi identidad — Firmar ahora</button>
+  </div>
+
+  <!-- Paso 4: firma -->
+  <div class="card step-panel" data-step="4" style="display:none">
+    <h2>5. Firma electrónicamente</h2>
+    <p class="help">Dibuja tu firma en el recuadro con el mouse o tu dedo.</p>
+    <canvas id="padCanvas" class="signature-pad" width="680" height="220"></canvas>
+    <br><br>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-outline" id="clearPad">Borrar</button>
+      <button class="btn btn-primary btn-block btn-lg" id="finishBtn">Confirmar firma y finalizar</button>
+    </div>
+  </div>
+
+  <!-- Confirmación -->
+  <div class="card step-panel" data-step="5" style="display:none">
+    <h2>✅ ¡Documento notariado!</h2>
+    <p class="help">Este es un resumen de tu sesión — no sustituye al certificado oficial que tu notario emite y firma.</p>
+    <div id="summaryBox"></div>
+    <br>
+    <a class="btn btn-primary btn-block btn-lg" href="/">Volver al inicio</a>
+  </div>
+</div>
+
+<script src="/js/app.js"></script>
+</body>
+</html>

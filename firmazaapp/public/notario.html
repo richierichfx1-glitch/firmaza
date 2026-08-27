@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel del notario — Firmaza</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header class="nav">
+  <div class="container nav-inner">
+    <a href="/" class="brand" style="text-decoration:none"><span class="dot"></span>Firmaza<small>Panel de notario</small></a>
+    <div class="nav-cta"><span class="status-pill live">RON activo</span></div>
+  </div>
+</header>
+
+<div class="app-shell" style="max-width:960px">
+  <div class="card">
+    <h2>Cola de firmantes esperando</h2>
+    <p class="help">Selecciona tu identidad de notario (demo) y toma la siguiente sesión disponible.</p>
+    <div class="field">
+      <label>Notario</label>
+      <select id="notarySelect"></select>
+    </div>
+    <table class="queue-table">
+      <thead><tr><th>Firmante</th><th>Documento</th><th>Estado</th><th>Creado</th><th></th></tr></thead>
+      <tbody id="queueBody"><tr><td colspan="5">Cargando…</td></tr></tbody>
+    </table>
+  </div>
+
+  <br>
+  <div class="card" id="callCard" style="display:none">
+    <h2>Sesión en vivo</h2>
+    <div class="video-wrap">
+      <div><video id="localVideo" autoplay muted playsinline></video><div class="center" style="font-size:12px;color:var(--gray);margin-top:4px">Tú (notario)</div></div>
+      <div><video id="remoteVideo" autoplay playsinline></video><div class="center" style="font-size:12px;color:var(--gray);margin-top:4px">Firmante</div></div>
+    </div>
+  </div>
+</div>
+
+<script src="/js/notario.js"></script>
+</body>
+</html>

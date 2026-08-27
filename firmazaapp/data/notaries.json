@@ -1,0 +1,13 @@
+{
+  "_comment": "Reemplaza esta lista con tus notarios reales que ya tienen comisión RON activa. Cada uno debe tener su comisión verificada en el estado indicado antes de recibir sesiones.",
+  "notaries": [
+    {
+      "id": "demo-1",
+      "name": "Notario de ejemplo (reemplázame)",
+      "statesCommissioned": ["TX"],
+      "languages": ["es", "en"],
+      "ronPlatformCommission": "PENDIENTE — agrega el número/fecha de comisión RON real",
+      "active": false
+    }
+  ]
+}
