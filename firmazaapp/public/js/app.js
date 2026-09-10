@@ -62,7 +62,7 @@ $('#toStep1').addEventListener('click', async () => {
   session.signerName = name;
   session.email = email;
   const base64 = await fileToBase64(uploadedFile);
-  await api('/upload', 'POST', { filename: uploadedFile.name, base64 });
+  await api('/upload', 'POST', { filename: uploadedFile.name, base64, signerName: name, email });
   showStep(1);
   loadIdvMode();
 });
@@ -93,12 +93,64 @@ $('#toStep3').addEventListener('click', async () => {
   const data = await api('/checkout', 'POST', { amount: 25, description: 'Primer sello notarial — Firmaza' });
   if (data.demo) {
     session = data.session;
-    showStep(3);
-    startCall();
+    startNotarization();
   } else if (data.url) {
-    window.location.href = data.url; // Stripe Checkout real
+    window.location.href = data.url; // Square Checkout real
   }
 });
+
+// --- Paso 3: arranca la notarización — Proof.com si está configurado, si no,
+// el video WebRTC propio como demo -------------------------------------------
+async function startNotarization() {
+  showStep(3);
+  let result;
+  try {
+    result = await api('/notarize', 'POST');
+  } catch (e) {
+    $('#callStatus').textContent = 'No se pudo iniciar la notarización: ' + e.message;
+    return;
+  }
+  session = result.session;
+  if (result.demo) {
+    startCall();
+  } else {
+    showProofHandoff();
+  }
+}
+
+function showProofHandoff() {
+  document.querySelector('.video-wrap').style.display = 'none';
+  $('#toStep4').style.display = 'none';
+  $('#callStatus').classList.remove('live');
+  $('#callStatus').textContent =
+    `Te enviamos un correo a ${session.email} (y SMS si dejaste teléfono) para conectarte por video con un notario y completar tu notarización. Puedes dejar esta pestaña abierta — se actualizará sola.`;
+  pollProofStatus();
+}
+
+async function pollProofStatus() {
+  try {
+    const { session: updated } = await api('/proof-status', 'GET');
+    session = updated;
+    if (session.status === 'notarizacion_completada') {
+      renderProofSummary();
+      showStep(5);
+      return;
+    }
+    if (session.status === 'notarizacion_rechazada') {
+      $('#callStatus').textContent = 'La notarización no se pudo completar. Contáctanos para más información.';
+      return;
+    }
+  } catch (e) { /* seguimos intentando en el siguiente ciclo */ }
+  setTimeout(pollProofStatus, 5000);
+}
+
+function renderProofSummary() {
+  $('#summaryBox').innerHTML = `
+    <div class="summary-row"><span>Firmante</span><strong>${session.signerName}</strong></div>
+    <div class="summary-row"><span>Documento</span><strong>${session.document?.originalName || '—'}</strong></div>
+    <div class="summary-row"><span>Notarización</span><strong>Completada con Proof.com</strong></div>
+  `;
+}
 
 // --- Paso 3: video WebRTC real (con señalización propia por polling) ---------
 let pc, localStream, roomId, pollTimer, myId;
