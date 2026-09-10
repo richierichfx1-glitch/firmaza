@@ -42,44 +42,62 @@ incluyendo una videollamada real por WebRTC entre dos pestañas/dispositivos
 | Cola de notarios | ✅ Real, editable en `data/notaries.json` |
 | Pagos con **Square** | 🔶 Código real (Payment Links API vía REST), necesita tu `SQUARE_ACCESS_TOKEN` y `SQUARE_LOCATION_ID` de developer.squareup.com |
 | Verificación de identidad (KBA + ID) | 🔶 Punto de integración listo (`runIdentityVerification` en `server.js`), falta elegir proveedor (Stripe Identity, Persona, IDenfy) y sus llaves |
-| RON con **BlueNotary** | 🔶 No se pudo conectar todavía — ver más abajo |
+| RON con **Proof.com** | ✅ Conectado de verdad — ver más abajo |
+| RON con **BlueNotary** | 🔶 No se pudo conectar todavía (queda como respaldo) — ver más abajo |
+| Dominio `firmaza.com` | ✅ Comprado, apuntado por DNS a Render, con certificado SSL activo |
+| Hosting | ✅ Desplegado en Render (plan gratuito) |
 
-## Sobre BlueNotary
+## Sobre Proof.com (el proveedor de RON que sí quedó conectado)
+
+A diferencia de BlueNotary y NotaryCam (ambos exigen pasar por su equipo de
+ventas empresariales antes de darte credenciales), la cuenta de negocio de
+Proof.com para "Firmaza" (organización `ord7gqygz`) **sí tiene autoservicio
+real**: Settings → API Keys genera una llave al instante.
+
+Cómo funciona: cuando un firmante sube su documento y paga en `/app`,
+`server.js` llama a `POST /api/sessions/:id/notarize`, que crea una
+transacción real en Proof.com (`integrations/proof.js`). Proof le manda al
+firmante un correo (y SMS si dejó teléfono) para conectarse por video con un
+notario y completar la notarización — esa videollamada ocurre dentro de la
+app de Proof, no en el WebRTC propio de Firmaza. `server.js` recibe los
+eventos de estado (enviado, en reunión, completado) en
+`POST /webhooks/proof`, ya registrado contra `https://firmaza.com/webhooks/proof`.
+
+**Importante — quién notaría:** el plan actual (self-serve) de la cuenta no
+incluye la función "in-house notaries" (eso requiere actualizar de plan —
+está bloqueado en Settings → Notary Settings del panel de Proof for
+Notaries). Mientras no se actualice, las transacciones las puede tomar
+*cualquier* notario disponible de la Red de Proof, no exclusivamente
+Ricardo. Se puede acotar por estado comisionado con
+`PROOF_ALLOWED_NOTARY_STATES` (ej. `MO`), pero eso no garantiza que sea él
+específicamente. Ver la nota completa en `integrations/proof.js`.
+
+## Sobre BlueNotary (respaldo, sin conectar)
 
 Investigué su sitio para integrarlo directo y **no tienen una API pública de
 autoservicio** con documentación técnica abierta (a diferencia de Square o
-Stripe, donde te creas una cuenta y ya tienes llaves). Su integración es
+Proof.com, donde te creas una cuenta y ya tienes llaves). Su integración es
 comercial: hay que contactar a su equipo (bluenotary.us /
 bluenotaryonline.com/for-businesses), y ellos entregan credenciales +
-documentación específica después de un acuerdo. Eso solo lo puedes hacer tú
-directamente con ellos.
+documentación específica después de un acuerdo. Como Proof.com ya quedó
+conectado y funcionando, esto queda como respaldo por si algún día quieres
+comparar proveedores — no es necesario perseguirlo.
 
 Dejé el molde listo en `integrations/bluenotary.js` con las preguntas exactas
-que deberías hacerles (¿redirect o embed?, ¿pueden usar tu propia red de
-notarios ya certificados en RON, o exigen la de ellos?, cómo notifican que
-terminó la sesión). En cuanto tengas esa documentación, lo conecto.
-
-Mientras tanto, el sitio usa **su propio sistema de videollamada** (WebRTC
-con servidores STUN de Google, sin costo) para que el flujo completo
-funcione de verdad hoy mismo.
+que habría que hacerles si se retoma.
 
 ## Para producción real, todavía falta
 
-1. **Dominio**: `firmaza.com` y `notarydeconfianza.com` están registrados por
-   terceros (aparecen en venta vía Sedo/parking). Ninguna herramienta que
-   tengo puede comprarlos por ti — esa compra/negociación la tienes que
-   hacer tú directamente (o me confirmas otro nombre disponible y seguimos).
-2. **Hosting**: este servidor necesita un proceso Node.js siempre encendido
-   (usa polling largo para la señalización de video y guarda archivos en
-   disco), así que **no es compatible con Netlify/Vercel en su modo
-   "funciones serverless"** — esos apagan el proceso entre peticiones. Te
-   recomiendo Render, Railway, Fly.io o un VPS pequeño (Digital Ocean,
-   Linode) con Node 18+. Puedo desplegarlo en cuanto conectes uno de esos y
-   me des acceso.
+1. ~~**Dominio**~~ — ✅ Listo: `firmaza.com` está comprado y apuntando por DNS
+   al servicio en Render, con certificado SSL activo.
+2. ~~**Hosting**~~ — ✅ Listo: desplegado en Render (plan gratuito). Un push a
+   la rama principal del repo despliega automáticamente.
 3. **TURN server**: STUN (gratis) alcanza para probar en la misma red; para
-   que la videollamada funcione de forma confiable a través de internet en
-   producción, hace falta un servidor TURN (ej. Twilio Network Traversal,
-   Cloudflare Calls, o un `coturn` propio).
+   que la videollamada propia (WebRTC, usada solo como respaldo/demo) funcione
+   de forma confiable a través de internet, hace falta un servidor TURN (ej.
+   Twilio Network Traversal, Cloudflare Calls, o un `coturn` propio). Con
+   Proof.com conectado, la videollamada real de producción ya no depende de
+   esto — la maneja Proof.
 4. **Cumplimiento legal de RON**: cada estado tiene sus propias reglas para
    notarización remota (retención de grabación de audio/video, a veces años;
    requisitos del proveedor de tecnología; tipo de verificación de identidad
@@ -89,13 +107,19 @@ funcione de verdad hoy mismo.
 5. **Base de datos real**: ahora mismo todo se guarda en archivos JSON
    (`data/sessions.json`) — perfecto para probar, pero para producción con
    tráfico real conviene Postgres/SQLite con transacciones.
+6. **Plan de Proof.com**: si quieres que las notarizaciones las tome
+   específicamente tú (Ricardo) y no cualquier notario de su red, hay que
+   actualizar del plan self-serve actual al que incluye "in-house notaries"
+   (ver nota en `integrations/proof.js`).
 
 ## Estructura del proyecto
 
 ```
 server.js              servidor completo (rutas, pagos, firma, señalización WebRTC)
 integrations/
-  bluenotary.js         molde para conectar BlueNotary cuando tengas sus credenciales
+  proof.js               integración real con Proof.com (RON) — activa
+  bluenotary.js          molde para conectar BlueNotary (respaldo, sin conectar)
+  notarycam.js            molde para conectar NotaryCam (respaldo, sin conectar)
 data/
   notaries.json          tu lista de notarios con RON activo (reemplaza el ejemplo)
   sessions.json           base de datos de sesiones (se crea sola)

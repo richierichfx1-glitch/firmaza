@@ -1,0 +1,6 @@
+node_modules/
+.env
+data/sessions.json
+data/uploads/*
+!data/uploads/.gitkeep
+*.log

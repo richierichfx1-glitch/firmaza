@@ -19,8 +19,11 @@
  *   GET  /api/notaries              -> lista notarios activos (RON)
  *   POST /api/sessions/:id/claim    -> un notario toma la sesión de la cola
  *   GET  /api/sessions/:id          -> estado de la sesión (para polling)
+ *   POST /api/sessions/:id/notarize -> envía la sesión a Proof.com (RON real) o queda en demo
+ *   GET  /api/sessions/:id/proof-status -> consulta el estado de la transacción en Proof.com
  *   POST /api/rtc/:room/signal      -> señalización WebRTC (oferta/respuesta/ICE)
  *   GET  /api/rtc/:room/signal      -> long-poll de señales pendientes
+ *   POST /webhooks/proof            -> recibe eventos de Proof.com (transacción actualizada)
  */
 
 const http = require('http');
@@ -28,6 +31,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { URL } = require('url');
+const proofRon = require('./integrations/proof');
 
 const PORT = process.env.PORT || 8080;
 const DATA_DIR = path.join(__dirname, 'data');
@@ -72,6 +76,20 @@ function send(res, status, body, headers = {}) {
     ...headers,
   });
   res.end(payload);
+}
+
+function readRawBody(req) {
+  return new Promise((resolve, reject) => {
+    let chunks = [];
+    let size = 0;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > 5 * 1024 * 1024) { reject(new Error('PAYLOAD_TOO_LARGE')); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
 }
 
 function readBody(req) {
@@ -215,6 +233,11 @@ async function handleApi(req, res, pathname, query) {
       const base64Data = body.base64.replace(/^data:.*;base64,/, '');
       fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
       s.document = { originalName: body.filename, storedAs: safeName, uploadedAt: new Date().toISOString() };
+      // El nombre/correo del firmante se capturan en este mismo paso del flujo
+      // (paso 0 en app.js); los guardamos aquí porque /api/sessions se crea
+      // antes de que el usuario los escriba.
+      if (body.signerName) s.signerName = body.signerName;
+      if (body.email) s.email = body.email;
       s.status = 'documento_subido';
       s.history.push({ event: 'documento_subido', at: new Date().toISOString() });
       saveSessions(sessions);
@@ -257,6 +280,52 @@ async function handleApi(req, res, pathname, query) {
         s.payment = { mode: 'square', paymentLinkId: result.id, amount: amountCents / 100 };
         saveSessions(sessions);
         return send(res, 200, { demo: false, url: result.url });
+      } catch (e) {
+        return send(res, 500, { error: e.message });
+      }
+    }
+
+    if (sub === '/notarize' && req.method === 'POST') {
+      if (!s.document) return send(res, 400, { error: 'Primero hay que subir el documento' });
+      if (!s.email) return send(res, 400, { error: 'La sesión no tiene correo del firmante' });
+      const origin = `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers.host}`;
+      const documentUrl = `${origin}/uploads/${s.document.storedAs}`;
+      try {
+        const result = await proofRon.createRonSession({
+          sessionId: id,
+          signerName: s.signerName,
+          signerEmail: s.email,
+          documentUrl,
+        });
+        if (!result) {
+          // Sin PROOF_API_KEY configurada: seguimos en modo demo (cola interna + WebRTC).
+          s.history.push({ event: 'notarize_modo_demo', at: new Date().toISOString() });
+          saveSessions(sessions);
+          return send(res, 200, { demo: true, session: s });
+        }
+        s.proof = {
+          transactionId: result.transactionId,
+          status: result.status,
+          createdAt: new Date().toISOString(),
+        };
+        s.status = 'enviado_a_notario_proof';
+        s.history.push({ event: 'enviado_a_proof', at: new Date().toISOString(), transactionId: result.transactionId });
+        saveSessions(sessions);
+        return send(res, 200, { demo: false, session: s });
+      } catch (e) {
+        return send(res, 500, { error: e.message });
+      }
+    }
+
+    if (sub === '/proof-status' && req.method === 'GET') {
+      if (!s.proof || !s.proof.transactionId) return send(res, 404, { error: 'Esta sesión no tiene transacción de Proof.com' });
+      try {
+        const tx = await proofRon.getTransactionStatus(s.proof.transactionId);
+        s.proof.status = tx?.status || s.proof.status;
+        if (tx?.status === 'completed' || tx?.status === 'released') s.status = 'notarizacion_completada';
+        else if (tx?.status === 'declined') s.status = 'notarizacion_rechazada';
+        saveSessions(sessions);
+        return send(res, 200, { session: s, transaction: tx });
       } catch (e) {
         return send(res, 500, { error: e.message });
       }
@@ -335,6 +404,44 @@ const server = http.createServer(async (req, res) => {
   const pathname = u.pathname;
 
   if (req.method === 'OPTIONS') return send(res, 204, '');
+
+  if (pathname === '/webhooks/proof' && req.method === 'POST') {
+    try {
+      const raw = await readRawBody(req);
+      const signature = req.headers['x-notarize-signature'];
+      if (!proofRon.verifyWebhookSignature(raw, signature)) {
+        console.warn('Webhook de Proof.com con firma inválida o PROOF_API_KEY no configurada');
+        return send(res, 400, { error: 'Firma inválida' });
+      }
+      const payload = JSON.parse(raw);
+      const event = payload.event;
+      const transactionId = payload.data?.transaction_id;
+      const sessions = loadSessions();
+      const match = Object.values(sessions).find((s) => s.proof?.transactionId === transactionId);
+      if (match) {
+        match.proof.status = event;
+        match.proof.lastEventAt = new Date().toISOString();
+        if (event === 'transaction.completed' || event === 'transaction.released') {
+          match.status = 'notarizacion_completada';
+        } else if (event === 'transaction.declined' || event === 'transaction.canceled' || event === 'transaction.expired') {
+          match.status = 'notarizacion_rechazada';
+        } else if (event === 'transaction.meeting.requested' || event === 'transaction.meeting.created' || event === 'notary.signer_ready') {
+          match.status = 'en_reunion_con_notario';
+        } else if (event === 'transaction.sent_to_signer') {
+          match.status = 'enviado_a_notario_proof';
+        }
+        match.history.push({ event: `proof:${event}`, at: new Date().toISOString() });
+        saveSessions(sessions);
+      } else {
+        console.warn(`Webhook de Proof.com para transacción sin sesión local: ${transactionId} (${event})`);
+      }
+      return send(res, 200, { received: true });
+    } catch (e) {
+      if (e.message === 'PAYLOAD_TOO_LARGE') return send(res, 413, { error: 'Payload demasiado grande' });
+      console.error('Error procesando webhook de Proof.com:', e.message);
+      return send(res, 500, { error: 'Error interno' });
+    }
+  }
 
   if (pathname.startsWith('/api/')) {
     try {
