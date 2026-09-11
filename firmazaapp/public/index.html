@@ -45,11 +45,11 @@
     </div>
     <div class="hero-art">
       <div class="screen">
-        <div class="call-row">
-          <div class="avatar"></div>
+        <div class="call-row" id="heroNotaryRow">
+          <div class="avatar" id="heroAvatar"></div>
           <div>
-            <div class="name">Notaria Ana Ramírez</div>
-            <div class="meta">Comisionada en TX · Habla español</div>
+            <div class="name" id="heroNotaryName">Notaria Ana Ramírez</div>
+            <div class="meta" id="heroNotaryMeta">Comisionada en TX · Habla español</div>
           </div>
         </div>
         <div class="call-row">
@@ -213,6 +213,53 @@ document.querySelectorAll('.faq-item').forEach(item=>{
     item.classList.toggle('open', !wasOpen);
   });
 });
+
+// Rota el notario de ejemplo en el mockup del hero para transmitir que hay
+// notarios reales de distintos estados conectándose a la plataforma todo el
+// tiempo. Es puramente decorativo — no refleja datos reales de sesiones.
+(function () {
+  var ROW = document.getElementById('heroNotaryRow');
+  var NAME_EL = document.getElementById('heroNotaryName');
+  var META_EL = document.getElementById('heroNotaryMeta');
+  var AVATAR_EL = document.getElementById('heroAvatar');
+  if (!ROW || !NAME_EL || !META_EL || !AVATAR_EL) return;
+
+  // Respeta a quienes prefieren menos movimiento en pantalla.
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  var NOTARIES = [
+    { name: 'Ana Ramírez', state: 'TX', gender: 'f' },
+    { name: 'Carlos Medina', state: 'CA', gender: 'm' },
+    { name: 'Lucía Fernández', state: 'FL', gender: 'f' },
+    { name: 'Miguel Torres', state: 'AZ', gender: 'm' },
+    { name: 'Sofía Delgado', state: 'NM', gender: 'f' },
+    { name: 'Roberto Salinas', state: 'IL', gender: 'm' },
+    { name: 'Daniela Ortiz', state: 'NY', gender: 'f' },
+    { name: 'Javier Castillo', state: 'CO', gender: 'm' },
+    { name: 'Valentina Reyes', state: 'NV', gender: 'f' },
+    { name: 'Andrés Gutiérrez', state: 'GA', gender: 'm' },
+  ];
+  var AVATAR_GRADIENTS = [
+    'linear-gradient(135deg,var(--coral),var(--gold))',
+    'linear-gradient(135deg,#155e5f,#0f3d3e)',
+    'linear-gradient(135deg,#e8583a,#8a2e17)',
+    'linear-gradient(135deg,#0f3d3e,#3ddc84)',
+    'linear-gradient(135deg,#f0a93a,#c8401f)',
+  ];
+
+  var i = 0;
+  setInterval(function () {
+    i = (i + 1) % NOTARIES.length;
+    ROW.style.opacity = '0';
+    setTimeout(function () {
+      var n = NOTARIES[i];
+      NAME_EL.textContent = (n.gender === 'f' ? 'Notaria ' : 'Notario ') + n.name;
+      META_EL.textContent = (n.gender === 'f' ? 'Comisionada en ' : 'Comisionado en ') + n.state + ' · Habla español';
+      AVATAR_EL.style.background = AVATAR_GRADIENTS[i % AVATAR_GRADIENTS.length];
+      ROW.style.opacity = '1';
+    }, 400);
+  }, 3200);
+})();
 </script>
 </body>
 </html>
