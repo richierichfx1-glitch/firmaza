@@ -112,7 +112,7 @@ function fileToBase64(file) {
   });
 }
 
-// --- Paso 0: subir documento -------------------------------------------------
+// --- Paso 0: subir documento, o pedirle a Firmaza que lo prepare -------------
 const dropzone = $('#dropzone');
 const fileInput = $('#fileInput');
 dropzone.addEventListener('click', () => fileInput.click());
@@ -126,18 +126,121 @@ function handleFile(file) {
   $('#dropzoneText').textContent = `✅ ${file.name} (${(file.size / 1024).toFixed(0)} KB)`;
 }
 
+// --- Selector de modo: subir / que Firmaza lo prepare / referido -------------
+let docMode = 'upload';
+let prepareMode = 'template';
+let templates = [];
+let selectedTemplateId = null;
+
+document.querySelectorAll('#modeUpload, #modePrepare, #modeReferral'); // (solo referencia, no usado directo)
+
+function setDocMode(mode) {
+  docMode = mode;
+  document.querySelectorAll('.mode-tabs')[0].querySelectorAll('.mode-tab').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+  $('#modeUpload').style.display = mode === 'upload' ? '' : 'none';
+  $('#modePrepare').style.display = mode === 'prepare' ? '' : 'none';
+  $('#modeReferral').style.display = mode === 'referral' ? '' : 'none';
+  $('#toStep1').style.display = mode === 'referral' ? 'none' : '';
+}
+
+document.querySelectorAll('.mode-tab[data-mode]').forEach((btn) => {
+  btn.addEventListener('click', () => setDocMode(btn.dataset.mode));
+});
+
+$('#referralGotIt').addEventListener('click', () => setDocMode('upload'));
+
+function setPrepareMode(mode) {
+  prepareMode = mode;
+  $('#modePrepare').querySelectorAll('.mode-tab[data-prepare-mode]').forEach((b) => b.classList.toggle('active', b.dataset.prepareMode === mode));
+  $('#prepareTemplate').style.display = mode === 'template' ? '' : 'none';
+  $('#prepareCustom').style.display = mode === 'custom' ? '' : 'none';
+}
+document.querySelectorAll('.mode-tab[data-prepare-mode]').forEach((btn) => {
+  btn.addEventListener('click', () => setPrepareMode(btn.dataset.prepareMode));
+});
+
+async function loadTemplates() {
+  try {
+    const res = await fetch('/api/document-templates');
+    const data = await res.json();
+    templates = data.templates || [];
+    renderTemplateList();
+  } catch {
+    $('#templateList').innerHTML = '<p class="help">No se pudieron cargar las plantillas. Intenta de nuevo más tarde.</p>';
+  }
+}
+
+function renderTemplateList() {
+  $('#templateList').innerHTML = templates.map((t) => `
+    <div class="template-card${t.id === selectedTemplateId ? ' active' : ''}" data-tid="${t.id}">
+      <div class="t-name">${t.name}</div>
+      <div class="t-desc">${t.description}</div>
+    </div>
+  `).join('');
+  $('#templateList').querySelectorAll('.template-card').forEach((card) => {
+    card.addEventListener('click', () => {
+      selectedTemplateId = card.dataset.tid;
+      renderTemplateList();
+      renderTemplateFields();
+    });
+  });
+}
+
+function renderTemplateFields() {
+  const t = templates.find((x) => x.id === selectedTemplateId);
+  const container = $('#templateFields');
+  if (!t) { container.innerHTML = ''; return; }
+  container.innerHTML = t.fields.map((f) => {
+    const req = f.required ? '' : ' <span class="hint" style="display:inline">(opcional)</span>';
+    if (f.type === 'textarea') {
+      return `<div class="field"><label>${f.label}${req}</label><textarea rows="4" data-fkey="${f.key}"></textarea></div>`;
+    }
+    const type = f.type === 'date' ? 'date' : 'text';
+    return `<div class="field"><label>${f.label}${req}</label><input type="${type}" data-fkey="${f.key}"></div>`;
+  }).join('');
+}
+
 $('#toStep1').addEventListener('click', async () => {
   const name = $('#signerName').value.trim();
   const email = $('#signerEmail').value.trim();
   if (!name || !email) return alert('Completa tu nombre y correo.');
-  if (!uploadedFile) return alert('Sube tu documento para continuar.');
   session.signerName = name;
   session.email = email;
-  const base64 = await fileToBase64(uploadedFile);
-  await api('/upload', 'POST', { filename: uploadedFile.name, base64, signerName: name, email });
+
+  if (docMode === 'upload') {
+    if (!uploadedFile) return alert('Sube tu documento para continuar.');
+    const base64 = await fileToBase64(uploadedFile);
+    await api('/upload', 'POST', { filename: uploadedFile.name, base64, signerName: name, email });
+  } else if (docMode === 'prepare' && prepareMode === 'template') {
+    if (!selectedTemplateId) return alert('Elige una plantilla para continuar.');
+    const t = templates.find((x) => x.id === selectedTemplateId);
+    const values = {};
+    let missing = null;
+    $('#templateFields').querySelectorAll('[data-fkey]').forEach((el) => { values[el.dataset.fkey] = el.value.trim(); });
+    for (const f of t.fields) {
+      if (f.required && !values[f.key]) missing = f.label;
+    }
+    if (missing) return alert(`Falta el campo "${missing}".`);
+    try {
+      await api('/prepare-document', 'POST', { mode: 'template', templateId: selectedTemplateId, values, signerName: name, email });
+    } catch (e) { return alert('No se pudo generar el documento: ' + e.message); }
+  } else if (docMode === 'prepare' && prepareMode === 'custom') {
+    const titulo = $('#customTitulo').value.trim();
+    const cuerpo = $('#customCuerpo').value.trim();
+    const lugar = $('#customLugar').value.trim();
+    if (!cuerpo) return alert('Escribe el texto de tu carta.');
+    try {
+      await api('/prepare-document', 'POST', { mode: 'custom', titulo, cuerpo, lugar, signerName: name, email });
+    } catch (e) { return alert('No se pudo generar el documento: ' + e.message); }
+  } else {
+    return; // modo referido: no hay nada que subir todavía
+  }
+
   showStep(1);
   loadIdvMode();
 });
+
+loadTemplates();
 
 // --- Paso 1: identidad --------------------------------------------------------
 async function loadIdvMode() {
@@ -216,10 +319,16 @@ async function pollProofStatus() {
   setTimeout(pollProofStatus, 5000);
 }
 
+function documentLabel() {
+  const d = session.document;
+  if (!d) return '—';
+  return d.preparedByFirmaza ? `${d.originalName} (preparado con Firmaza)` : d.originalName;
+}
+
 function renderProofSummary() {
   $('#summaryBox').innerHTML = `
     <div class="summary-row"><span>Firmante</span><strong>${session.signerName}</strong></div>
-    <div class="summary-row"><span>Documento</span><strong>${session.document?.originalName || '—'}</strong></div>
+    <div class="summary-row"><span>Documento</span><strong>${documentLabel()}</strong></div>
     <div class="summary-row"><span>Notarización</span><strong>Completada con Proof.com</strong></div>
   `;
 }
@@ -311,7 +420,7 @@ $('#finishBtn').addEventListener('click', async () => {
 function renderSummary() {
   $('#summaryBox').innerHTML = `
     <div class="summary-row"><span>Firmante</span><strong>${session.signerName}</strong></div>
-    <div class="summary-row"><span>Documento</span><strong>${session.document?.originalName || '—'}</strong></div>
+    <div class="summary-row"><span>Documento</span><strong>${documentLabel()}</strong></div>
     <div class="summary-row"><span>Firmado el</span><strong>${new Date(session.signature.signedAt).toLocaleString('es-MX')}</strong></div>
     <div class="summary-row"><span>Folio de auditoría</span><strong style="font-family:monospace">${session.signature.auditHash.slice(0, 16)}…</strong></div>
   `;
