@@ -81,17 +81,29 @@ el "Signer Checklist", el aviso de no reenviar el correo y el pie "About
 Proof" con las marcas Proof/Notarize) la genera Proof.com en inglés fijo y
 no se puede traducir vía API — es una limitación de su plataforma, no del
 código de Firmaza. Tampoco es blanco-etiqueta al 100%: ese pie de página
-expone "Proof" y "Notarize" en vez de mostrar solo "Firmaza". Si esto
-importa mucho, las únicas vías son (a) revisar si el panel Settings →
-Brand customization de Proof for Notaries permite ocultar esas marcas o
-cambiar el idioma de la plantilla (no confirmado — requiere que entres tú
-con tu sesión), o (b) escribirle a soporte de Proof para pedirlo
-directamente. La parte buena: la videollamada de notarización SÍ soporta
-español — el firmante puede pedir "Comunícate con un notario
-hispanohablante" en la pantalla de la reunión y lo conectan con un notario
-que habla español (ver
+expone "Proof" y "Notarize" en vez de mostrar solo "Firmaza".
+
+**Ya se configuró Settings → Brand customization** (panel de Proof for
+Notaries) con lo máximo que ese plan permite:
+- Brand name = "Firmaza".
+- Logo subido (`assets/firmaza-logo.png`, wordmark igual al del sitio: punto
+  coral + "Firmaza" en serif sobre el color teal de la marca).
+- Estilo de encabezado co-marcado = la opción más discreta disponible
+  ("Powered by [ícono pequeño]" en vez del logo completo de Proof). **No
+  existe una opción para quitar a Proof del todo en este plan** — las 4
+  opciones de encabezado siempre incluyen su marca en algún tamaño.
+- Colores de marca (tema web y botones) = teal `#0f3d3e` y coral `#e8583a`,
+  los mismos tokens que usa `public/css/style.css`.
+- Bloque de bienvenida del firmante (Recipient welcome page → Notarize) con
+  título y texto en español, recordándole que puede pedir un notario que
+  hable español en la videollamada.
+
+La parte buena: la videollamada de notarización SÍ soporta español — el
+firmante puede pedir "Comunícate con un notario hispanohablante" en la
+pantalla de la reunión y lo conectan con un notario que habla español (ver
 https://support.proof.com/hc/en-us/articles/20011382358935). El mensaje en
-español que manda Firmaza ahora se lo recuerda al firmante.
+español que manda Firmaza (y ahora también el bloque de bienvenida) se lo
+recuerda al firmante.
 
 ## Sobre BlueNotary (respaldo, sin conectar)
 
