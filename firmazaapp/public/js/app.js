@@ -25,10 +25,82 @@ async function api(pathSuffix, method = 'GET', body) {
 }
 
 async function ensureSession() {
+  const resumeId = getResumeSessionIdFromHash();
+  if (resumeId && (await tryResumeSession(resumeId))) return;
+
   const res = await fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
   const data = await res.json();
   session = data.session;
   $('#sessionPill').textContent = `Sesión ${session.id.slice(0, 6)}`;
+}
+
+// Square regresa al firmante a /app#/pagar-exito/<id> después de un pago
+// real (ver `redirectUrl` en server.js). Sin esto, ensureSession() de
+// arriba siempre creaba una sesión nueva y el firmante perdía su documento
+// y sus datos ya capturados — quedaba "atorado" justo después de pagar.
+function getResumeSessionIdFromHash() {
+  const m = location.hash.match(/^#\/pagar-exito\/([^/?]+)/);
+  return m ? m[1] : null;
+}
+
+async function tryResumeSession(id) {
+  try {
+    const res = await fetch(`/api/sessions/${id}`);
+    if (!res.ok) return false;
+    const data = await res.json();
+    session = data.session;
+    $('#sessionPill').textContent = `Sesión ${session.id.slice(0, 6)}`;
+    // Limpiamos el hash para que un refresh no vuelva a disparar todo esto.
+    history.replaceState(null, '', location.pathname + location.search);
+    await resumeAfterPayment();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Confirma el pago (si hacía falta) y continúa el flujo exactamente donde
+// se quedó la sesión, sin repetir pasos ya hechos ni volver a llamar
+// /notarize si ya se había enviado a Proof.com (eso crearía una
+// transacción duplicada si el firmante recarga la página de éxito).
+async function resumeAfterPayment() {
+  if (session.status !== 'pagado_demo' && session.payment?.mode !== 'demo') {
+    try {
+      const { session: updated } = await api('/confirm-payment', 'POST');
+      session = updated;
+    } catch { /* seguimos con lo que ya teníamos guardado */ }
+  }
+  $('#paymentNote').textContent = 'Pago procesado de forma segura con Square.';
+  routeToCurrentStatus();
+}
+
+function routeToCurrentStatus() {
+  switch (session.status) {
+    case 'notarizacion_completada':
+      renderProofSummary();
+      showStep(5);
+      return;
+    case 'firmado':
+      renderSummary();
+      showStep(5);
+      return;
+    case 'enviado_a_notario_proof':
+      showStep(3);
+      showProofHandoff();
+      return;
+    case 'notarizacion_rechazada':
+      showStep(3);
+      $('#callStatus').textContent = 'La notarización no se pudo completar. Contáctanos para más información.';
+      return;
+    case 'en_sesion_con_notario':
+      showStep(3);
+      startCall();
+      return;
+    default:
+      // pagado_demo / pagado_square / cualquier estado antes de iniciar la
+      // notarización: seguimos el flujo normal desde el paso de pago.
+      startNotarization();
+  }
 }
 
 function fileToBase64(file) {
