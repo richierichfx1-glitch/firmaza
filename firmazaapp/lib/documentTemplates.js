@@ -46,14 +46,14 @@ const TEMPLATES = [
     description:
       'Para autorizar a alguien a hacer un trámite puntual en tu nombre (recoger un paquete, un trámite escolar, etc). No es un Poder Notarial (Power of Attorney) legal amplio — para poderes financieros, médicos o inmobiliarios consulta a un abogado.',
     fields: [
-      { key: 'poderdanteNombre', label: 'Tu nombre completo (quien autoriza)', type: 'text', required: true },
-      { key: 'poderdanteId', label: 'Tu identificación (tipo y número)', type: 'text', required: true },
-      { key: 'apoderadoNombre', label: 'Nombre completo de la persona autorizada', type: 'text', required: true },
-      { key: 'apoderadoId', label: 'Identificación de la persona autorizada (si la sabes)', type: 'text', required: false },
-      { key: 'alcance', label: 'Describe con tus propias palabras, exactamente, para qué la autorizas', type: 'textarea', required: true },
+      { key: 'poderdanteNombre', label: 'Tu nombre completo (quien autoriza)', type: 'text', required: true, placeholder: 'Ej. María López García' },
+      { key: 'poderdanteId', label: 'Tu identificación (tipo y número)', type: 'text', required: true, placeholder: 'Ej. Licencia de conducir #A1234567' },
+      { key: 'apoderadoNombre', label: 'Nombre completo de la persona autorizada', type: 'text', required: true, placeholder: 'Ej. Juan Carlos Pérez' },
+      { key: 'apoderadoId', label: 'Identificación de la persona autorizada (si la sabes)', type: 'text', required: false, placeholder: 'Ej. Pasaporte 123456789' },
+      { key: 'alcance', label: 'Describe con tus propias palabras, exactamente, para qué la autorizas', type: 'textarea', required: true, placeholder: 'Ej. Recoger mi paquete certificado en la oficina de USPS de 123 Main St en mi nombre, durante el mes de octubre de 2026.' },
       { key: 'fechaInicio', label: 'Válida desde', type: 'date', required: true },
       { key: 'fechaFin', label: 'Válida hasta (opcional)', type: 'date', required: false },
-      { key: 'lugar', label: 'Ciudad y estado donde se firma', type: 'text', required: true },
+      { key: 'lugar', label: 'Ciudad y estado donde se firma', type: 'text', required: true, placeholder: 'Ej. Kansas City, Missouri' },
     ],
     render(v) {
       return [
@@ -74,16 +74,16 @@ const TEMPLATES = [
     name: 'Carta de consentimiento de viaje para menores',
     description: 'Para cuando un menor viaja sin uno o ambos padres/tutores.',
     fields: [
-      { key: 'menorNombre', label: 'Nombre completo del menor', type: 'text', required: true },
+      { key: 'menorNombre', label: 'Nombre completo del menor', type: 'text', required: true, placeholder: 'Ej. Sofía Ramírez López' },
       { key: 'menorNacimiento', label: 'Fecha de nacimiento del menor', type: 'date', required: true },
-      { key: 'padreNombre', label: 'Tu nombre completo (padre/madre/tutor que firma)', type: 'text', required: true },
-      { key: 'padreId', label: 'Tu identificación (tipo y número)', type: 'text', required: true },
-      { key: 'padreAusenteNombre', label: 'Nombre del otro padre/tutor (si no viaja ni firma esta carta)', type: 'text', required: false },
-      { key: 'acompananteNombre', label: 'Nombre del adulto que acompaña al menor (si aplica)', type: 'text', required: false },
-      { key: 'destino', label: 'Destino del viaje', type: 'text', required: true },
+      { key: 'padreNombre', label: 'Tu nombre completo (padre/madre/tutor que firma)', type: 'text', required: true, placeholder: 'Ej. Ricardo Vivas Barrios' },
+      { key: 'padreId', label: 'Tu identificación (tipo y número)', type: 'text', required: true, placeholder: 'Ej. Pasaporte 123456789' },
+      { key: 'padreAusenteNombre', label: 'Nombre del otro padre/tutor (si no viaja ni firma esta carta)', type: 'text', required: false, placeholder: 'Ej. Ana Ramírez Torres' },
+      { key: 'acompananteNombre', label: 'Nombre del adulto que acompaña al menor (si aplica)', type: 'text', required: false, placeholder: 'Ej. Ana Lucía Vivas' },
+      { key: 'destino', label: 'Destino del viaje', type: 'text', required: true, placeholder: 'Ej. Ciudad de México, México' },
       { key: 'fechaSalida', label: 'Fecha de salida', type: 'date', required: true },
       { key: 'fechaRegreso', label: 'Fecha de regreso', type: 'date', required: true },
-      { key: 'lugar', label: 'Ciudad y estado donde se firma', type: 'text', required: true },
+      { key: 'lugar', label: 'Ciudad y estado donde se firma', type: 'text', required: true, placeholder: 'Ej. Kansas City, Missouri' },
     ],
     render(v) {
       const lines = [
@@ -111,10 +111,10 @@ const TEMPLATES = [
     name: 'Declaración jurada genérica',
     description: 'Para declarar bajo juramento hechos que tú describes con tus propias palabras.',
     fields: [
-      { key: 'declaranteNombre', label: 'Tu nombre completo', type: 'text', required: true },
-      { key: 'declaranteId', label: 'Tu identificación (tipo y número)', type: 'text', required: true },
-      { key: 'declaracion', label: 'Escribe exactamente lo que quieres declarar bajo juramento', type: 'textarea', required: true },
-      { key: 'lugar', label: 'Ciudad y estado donde se firma', type: 'text', required: true },
+      { key: 'declaranteNombre', label: 'Tu nombre completo', type: 'text', required: true, placeholder: 'Ej. Ricardo Vivas Barrios' },
+      { key: 'declaranteId', label: 'Tu identificación (tipo y número)', type: 'text', required: true, placeholder: 'Ej. ID estatal #12345678' },
+      { key: 'declaracion', label: 'Escribe exactamente lo que quieres declarar bajo juramento', type: 'textarea', required: true, placeholder: 'Ej. Declaro que resido en Kansas City, Missouri desde enero de 2020.' },
+      { key: 'lugar', label: 'Ciudad y estado donde se firma', type: 'text', required: true, placeholder: 'Ej. Kansas City, Missouri' },
     ],
     render(v) {
       return [
@@ -138,13 +138,18 @@ function listTemplates() {
   return TEMPLATES.map(({ id, name, description, fields }) => ({ id, name, description, fields }));
 }
 
+/** Devuelve la lista de campos requeridos que faltan ({key, label}), o un
+ * arreglo vacío si todo está completo. Se usa tanto en el servidor (defensa
+ * final) como en el navegador (para resaltar los campos exactos en rojo en
+ * vez de un alert() genérico). */
 function validateValues(template, values) {
+  const missing = [];
   for (const f of template.fields) {
     if (f.required && !String(values?.[f.key] || '').trim()) {
-      return `Falta el campo "${f.label}"`;
+      missing.push({ key: f.key, label: f.label });
     }
   }
-  return null;
+  return missing;
 }
 
 /** Para la categoría "carta simple": el cliente escribe TODO el texto, Firmaza
