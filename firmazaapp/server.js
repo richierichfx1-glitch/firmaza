@@ -127,6 +127,12 @@ const MIME = {
   '.png': 'image/png',
   '.json': 'application/json',
   '.ico': 'image/x-icon',
+  // Sin esto, los PDF (incluidos los que genera lib/pdf.js) se servían como
+  // application/octet-stream y el navegador los descargaba en vez de
+  // mostrarlos dentro del <iframe> de vista previa del documento.
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 };
 
 function serveStatic(req, res, filePath) {
@@ -262,8 +268,13 @@ async function handleApi(req, res, pathname, query) {
           const template = docTemplates.getTemplate(body.templateId);
           if (!template) return send(res, 400, { error: 'Plantilla no encontrada' });
           const values = body.values || {};
-          const err = docTemplates.validateValues(template, values);
-          if (err) return send(res, 400, { error: err });
+          const missing = docTemplates.validateValues(template, values);
+          if (missing.length) {
+            return send(res, 400, {
+              error: `Falta completar: ${missing.map((f) => f.label).join(', ')}`,
+              missingFields: missing,
+            });
+          }
           blocks = template.render(values);
           docTitle = template.name;
           templateId = template.id;
