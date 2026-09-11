@@ -1,0 +1,7 @@
+# Nunca subir secretos ni datos generados en desarrollo local.
+.env
+.env.*
+!.env.example
+data/
+node_modules/
+*.log
