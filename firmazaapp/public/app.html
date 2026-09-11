@@ -29,88 +29,110 @@
   <!-- Paso 0: datos + documento -->
   <div class="card step-panel" data-step="0">
     <h2>1. Tu documento</h2>
-    <p class="help">¿Ya tienes tu documento listo, o quieres que te ayudemos a prepararlo?</p>
 
-    <div class="mode-tabs">
-      <button type="button" class="mode-tab active" data-mode="upload"><span class="em">📄</span>Ya lo tengo listo</button>
-      <button type="button" class="mode-tab" data-mode="prepare"><span class="em">📝</span>Ayúdenme a prepararlo</button>
-      <button type="button" class="mode-tab" data-mode="referral"><span class="em">🧭</span>Es algo más personalizado</button>
-    </div>
+    <!-- Elegir/preparar el documento -->
+    <div id="docChooser">
+      <p class="help">¿Ya tienes tu documento listo, o quieres que te ayudemos a prepararlo?</p>
 
-    <div class="field">
-      <label>Nombre completo</label>
-      <input type="text" id="signerName" placeholder="Como aparece en tu identificación">
-    </div>
-    <div class="field">
-      <label>Correo electrónico</label>
-      <input type="email" id="signerEmail" placeholder="tucorreo@ejemplo.com">
-    </div>
-
-    <!-- Modo: subir mi propio documento -->
-    <div id="modeUpload">
-      <p class="help">Acepta PDF, DOC o DOCX. Este archivo solo lo verá tu notario durante la sesión.</p>
-      <div class="dropzone" id="dropzone">
-        <div id="dropzoneText">📄 Arrastra tu documento aquí o haz clic para elegir un archivo</div>
-        <input type="file" id="fileInput" accept=".pdf,.doc,.docx" style="display:none">
-      </div>
-    </div>
-
-    <!-- Modo: que Firmaza lo prepare (plantilla o carta dictada) -->
-    <div id="modePrepare" style="display:none">
-      <div class="disclaimer-box">
-        <strong>Aviso:</strong> Firmaza no es un despacho de abogados y no da asesoría legal.
-        No elegimos por ti qué documento usar ni redactamos su contenido — tú llenas los
-        espacios o escribes el texto con tus propias palabras, y nosotros solo le damos
-        formato de documento. Si tienes dudas legales, consulta a un abogado con licencia.
+      <div class="mode-tabs">
+        <button type="button" class="mode-tab active" data-mode="upload"><span class="em">📄</span>Ya lo tengo listo</button>
+        <button type="button" class="mode-tab" data-mode="prepare"><span class="em">📝</span>Ayúdenme a prepararlo</button>
+        <button type="button" class="mode-tab" data-mode="referral"><span class="em">🤝</span>Es algo más personalizado</button>
       </div>
 
-      <div class="mode-tabs" style="grid-template-columns:1fr 1fr">
-        <button type="button" class="mode-tab active" data-prepare-mode="template"><span class="em">📋</span>Usar una plantilla</button>
-        <button type="button" class="mode-tab" data-prepare-mode="custom"><span class="em">✍️</span>Escribir mi propia carta</button>
+      <div class="field" id="fieldSignerName">
+        <label>Nombre completo</label>
+        <input type="text" id="signerName" placeholder="Como aparece en tu identificación">
+        <span class="field-error" id="errSignerName"></span>
+      </div>
+      <div class="field" id="fieldSignerEmail">
+        <label>Correo electrónico</label>
+        <input type="email" id="signerEmail" placeholder="tucorreo@ejemplo.com">
+        <span class="field-error" id="errSignerEmail"></span>
       </div>
 
-      <!-- Sub-modo: plantillas -->
-      <div id="prepareTemplate">
-        <div class="template-list" id="templateList"><p class="help">Cargando plantillas…</p></div>
-        <div id="templateFields"></div>
-      </div>
-
-      <!-- Sub-modo: carta dictada por el cliente -->
-      <div id="prepareCustom" style="display:none">
-        <div class="field">
-          <label>Título de la carta</label>
-          <input type="text" id="customTitulo" placeholder="Ej. Carta de referencia laboral">
+      <!-- Modo: subir mi propio documento -->
+      <div id="modeUpload">
+        <p class="help">Acepta PDF, DOC o DOCX. Este archivo solo lo verá tu notario durante la sesión.</p>
+        <div class="dropzone" id="dropzone">
+          <div id="dropzoneText">📄 Arrastra tu documento aquí o haz clic para elegir un archivo</div>
+          <input type="file" id="fileInput" accept=".pdf,.doc,.docx" style="display:none">
         </div>
-        <div class="field">
-          <label>Escribe el texto completo de tu carta</label>
-          <textarea id="customCuerpo" rows="8" placeholder="Escribe aquí exactamente lo que quieres que diga tu carta..."></textarea>
-          <span class="hint">Nosotros solo le damos formato — el contenido es tal como tú lo escribas.</span>
+        <span class="field-error" id="errDropzone"></span>
+      </div>
+
+      <!-- Modo: que Firmaza lo prepare (plantilla o carta dictada) -->
+      <div id="modePrepare" style="display:none">
+        <div class="disclaimer-box">
+          <strong>Aviso:</strong> Firmaza no es un despacho de abogados y no da asesoría legal.
+          No elegimos por ti qué documento usar ni redactamos su contenido — tú llenas los
+          espacios o escribes el texto con tus propias palabras, y nosotros solo le damos
+          formato de documento. Si tienes dudas legales, consulta a un abogado con licencia.
         </div>
-        <div class="field">
-          <label>Ciudad y estado donde se firma</label>
-          <input type="text" id="customLugar" placeholder="Ej. Kansas City, Missouri">
+
+        <div class="mode-tabs" style="grid-template-columns:1fr 1fr">
+          <button type="button" class="mode-tab active" data-prepare-mode="template"><span class="em">📋</span>Usar una plantilla</button>
+          <button type="button" class="mode-tab" data-prepare-mode="custom"><span class="em">✍️</span>Escribir mi propia carta</button>
+        </div>
+
+        <!-- Sub-modo: plantillas -->
+        <div id="prepareTemplate">
+          <div class="template-list" id="templateList"><p class="help">Cargando plantillas…</p></div>
+          <span class="field-error" id="errTemplate"></span>
+          <div id="templateFields"></div>
+        </div>
+
+        <!-- Sub-modo: carta dictada por el cliente -->
+        <div id="prepareCustom" style="display:none">
+          <div class="field">
+            <label>Título de la carta</label>
+            <input type="text" id="customTitulo" placeholder="Ej. Carta de referencia laboral">
+          </div>
+          <div class="field" id="fieldCustomCuerpo">
+            <label>Escribe el texto completo de tu carta</label>
+            <textarea id="customCuerpo" rows="8" placeholder="Escribe aquí exactamente lo que quieres que diga tu carta..."></textarea>
+            <span class="hint">Nosotros solo le damos formato — el contenido es tal como tú lo escribas.</span>
+            <span class="field-error" id="errCustomCuerpo"></span>
+          </div>
+          <div class="field">
+            <label>Ciudad y estado donde se firma</label>
+            <input type="text" id="customLugar" placeholder="Ej. Kansas City, Missouri">
+          </div>
         </div>
       </div>
+
+      <!-- Modo: referido para documentos más complejos -->
+      <div id="modeReferral" style="display:none">
+        <div class="referral-card">
+          <div class="r-title">Este tipo de documento necesita ayuda profesional</div>
+          <p class="help">Para documentos personalizados que van más allá de una plantilla estándar, te recomendamos contactar a nuestros aliados:</p>
+          <div class="r-contact">
+            Richie Tax LLC<br>
+            🌐 <a href="https://www.richietaxllc.com" target="_blank" rel="noopener">www.richietaxllc.com</a><br>
+            📞 <a href="tel:8163809868">816-380-9868</a>
+          </div>
+          <p class="help">Cuando ya tengas tu documento listo, regresa aquí y súbelo para continuar con la notarización.</p>
+          <br>
+          <button type="button" class="btn btn-outline" id="referralGotIt">Ya tengo mi documento — subirlo</button>
+        </div>
+      </div>
+
+      <div class="error-banner" id="formError" style="display:none"></div>
+      <br>
+      <button class="btn btn-primary btn-block btn-lg" id="toStep1">Continuar</button>
     </div>
 
-    <!-- Modo: referido para documentos más complejos -->
-    <div id="modeReferral" style="display:none">
-      <div class="referral-card">
-        <div class="r-title">Este tipo de documento necesita ayuda profesional</div>
-        <p class="help">Para documentos personalizados que van más allá de una plantilla estándar, te recomendamos contactar a nuestros aliados:</p>
-        <div class="r-contact">
-          Richie Tax LLC<br>
-          🌐 <a href="https://www.richietaxllc.com" target="_blank" rel="noopener">www.richietaxllc.com</a><br>
-          📞 <a href="tel:8163809868">816-380-9868</a>
-        </div>
-        <p class="help">Cuando ya tengas tu documento listo, regresa aquí y súbelo para continuar con la notarización.</p>
-        <br>
-        <button type="button" class="btn btn-outline" id="referralGotIt">Ya tengo mi documento — subirlo</button>
+    <!-- Vista previa del documento que Firmaza generó -->
+    <div id="docPreview" style="display:none">
+      <h3 style="margin-top:0">Revisa tu documento</h3>
+      <p class="help">Así va a quedar tu documento. Si algo está mal, puedes editarlo antes de continuar.</p>
+      <iframe id="docPreviewFrame" class="doc-preview-frame" title="Vista previa del documento"></iframe>
+      <br><br>
+      <div style="display:flex;gap:10px">
+        <button type="button" class="btn btn-outline" id="docPreviewEdit">✏️ Editar</button>
+        <button type="button" class="btn btn-primary btn-block btn-lg" id="docPreviewConfirm">Confirmar y continuar</button>
       </div>
     </div>
-
-    <br>
-    <button class="btn btn-primary btn-block btn-lg" id="toStep1">Continuar</button>
   </div>
   <!-- fin paso 0 -->
 
