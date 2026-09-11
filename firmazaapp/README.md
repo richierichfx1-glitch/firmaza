@@ -42,7 +42,7 @@ incluyendo una videollamada real por WebRTC entre dos pestañas/dispositivos
 | Cola de notarios | ✅ Real, editable en `data/notaries.json` |
 | Pagos con **Square** | 🔶 Código real (Payment Links API vía REST), necesita tu `SQUARE_ACCESS_TOKEN` y `SQUARE_LOCATION_ID` de developer.squareup.com |
 | Verificación de identidad (KBA + ID) | 🔶 Punto de integración listo (`runIdentityVerification` en `server.js`), falta elegir proveedor (Stripe Identity, Persona, IDenfy) y sus llaves |
-| RON con **Proof.com** | ✅ Conectado de verdad — ver más abajo |
+| RON con **Proof.com** | ✅ Conectado de verdad — ver más abajo (⚠️ el correo que Proof le manda al firmante es mayormente en inglés fijo, ver nota abajo) |
 | RON con **BlueNotary** | 🔶 No se pudo conectar todavía (queda como respaldo) — ver más abajo |
 | Dominio `firmaza.com` | ✅ Comprado, apuntado por DNS a Render, con certificado SSL activo |
 | Hosting | ✅ Desplegado en Render (plan gratuito) |
@@ -71,6 +71,27 @@ Notaries). Mientras no se actualice, las transacciones las puede tomar
 Ricardo. Se puede acotar por estado comisionado con
 `PROOF_ALLOWED_NOTARY_STATES` (ej. `MO`), pero eso no garantiza que sea él
 específicamente. Ver la nota completa en `integrations/proof.js`.
+
+**Importante — idioma del correo que recibe el firmante:** la API de
+Proof.com no tiene ningún parámetro de idioma/locale. Lo único que Firmaza
+controla es el asunto (`message_subject`) y el mensaje del cuerpo
+(`message_to_signer`) — ambos ya están en español en `integrations/proof.js`.
+El resto de la plantilla (saludo "Hi [nombre],", la sección "How it works",
+el "Signer Checklist", el aviso de no reenviar el correo y el pie "About
+Proof" con las marcas Proof/Notarize) la genera Proof.com en inglés fijo y
+no se puede traducir vía API — es una limitación de su plataforma, no del
+código de Firmaza. Tampoco es blanco-etiqueta al 100%: ese pie de página
+expone "Proof" y "Notarize" en vez de mostrar solo "Firmaza". Si esto
+importa mucho, las únicas vías son (a) revisar si el panel Settings →
+Brand customization de Proof for Notaries permite ocultar esas marcas o
+cambiar el idioma de la plantilla (no confirmado — requiere que entres tú
+con tu sesión), o (b) escribirle a soporte de Proof para pedirlo
+directamente. La parte buena: la videollamada de notarización SÍ soporta
+español — el firmante puede pedir "Comunícate con un notario
+hispanohablante" en la pantalla de la reunión y lo conectan con un notario
+que habla español (ver
+https://support.proof.com/hc/en-us/articles/20011382358935). El mensaje en
+español que manda Firmaza ahora se lo recuerda al firmante.
 
 ## Sobre BlueNotary (respaldo, sin conectar)
 
