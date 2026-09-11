@@ -42,30 +42,30 @@ const PROOF_BASE_URL = (process.env.PROOF_API_BASE_URL || 'https://api.proof.com
 const PROOF_BASE_URL_V2 = PROOF_BASE_URL.replace(/\/v1$/, '/v2');
 
 function splitName(fullName) {
-  const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return {};
-  const first_name = parts[0];
-  const last_name = parts.length > 1 ? parts.slice(1).join(' ') : undefined;
-  return last_name ? { first_name, last_name } : { first_name };
+    const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return {};
+    const first_name = parts[0];
+    const last_name = parts.length > 1 ? parts.slice(1).join(' ') : undefined;
+    return last_name ? { first_name, last_name } : { first_name };
 }
 
 async function proofFetch(url, { apiKey, method = 'GET', body } = {}) {
-  const resp = await fetch(url, {
-    method,
-    headers: {
-      ApiKey: apiKey,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  let json = null;
-  try { json = await resp.json(); } catch { /* respuesta vacía o no-JSON */ }
-  if (!resp.ok) {
-    const detail = json?.message || json?.error || json?.errors?.[0]?.message || `HTTP ${resp.status}`;
-    throw new Error(`Proof.com: ${detail}`);
-  }
-  return json;
+    const resp = await fetch(url, {
+          method,
+          headers: {
+                  ApiKey: apiKey,
+                  'Content-Type': 'application/json',
+                  Accept: 'application/json',
+          },
+          body: body ? JSON.stringify(body) : undefined,
+    });
+    let json = null;
+    try { json = await resp.json(); } catch { /* respuesta vacía o no-JSON */ }
+    if (!resp.ok) {
+          const detail = json?.message || json?.error || json?.errors?.[0]?.message || `HTTP ${resp.status}`;
+          throw new Error(`Proof.com: ${detail}`);
+    }
+    return json;
 }
 
 /**
@@ -74,44 +74,50 @@ async function proofFetch(url, { apiKey, method = 'GET', body } = {}) {
  * bluenotary.js / notarycam.js, para que server.js pueda usar su flujo propio
  * (WebRTC) como respaldo mientras no haya credenciales.
  */
-async function createRonSession({ sessionId, signerName, signerEmail, signerPhone, documentUrl, message }) {
-  const apiKey = process.env.PROOF_API_KEY;
-  if (!apiKey) return null;
+async function createRonSession({ sessionId, signerName, signerEmail, signerPhone, documentUrl, message, subject }) {
+    const apiKey = process.env.PROOF_API_KEY;
+    if (!apiKey) return null;
 
   if (!signerEmail) throw new Error('Proof.com requiere el correo del firmante para crear la transacción.');
-  if (!documentUrl) throw new Error('Proof.com requiere una URL pública del documento a notarizar.');
+    if (!documentUrl) throw new Error('Proof.com requiere una URL pública del documento a notarizar.');
 
   const signer = { email: signerEmail, ...splitName(signerName) };
-  if (signerPhone) signer.phone_number = signerPhone;
+    if (signerPhone) signer.phone_number = signerPhone;
 
+  // NOTA sobre idioma del correo: la API de Proof.com NO tiene un parámetro de
+  // idioma/locale. Solo estos dos campos de texto son personalizables — el
+  // resto de la plantilla (saludo, "How it works", "Signer Checklist", aviso
+  // de reenvío y el pie "About Proof") la genera Proof en inglés fijo y no se
+  // puede traducir desde la API. Ver README para el detalle de esta limitación.
   const body = {
-    external_id: sessionId, // para poder emparejar los webhooks con la sesión de Firmaza
-    transaction_name: `Firmaza — ${signerName || signerEmail}`,
-    transaction_type: 'Notarización remota (RON) — Firmaza',
-    message_to_signer: message || 'Tu documento está listo. Sigue el enlace para conectarte con un notario por video y completar la notarización.',
-    config_id: 'notarization',
-    signers: [signer],
-    documents: [{ resource: documentUrl, requirement: 'notarization' }],
+        external_id: sessionId, // para poder emparejar los webhooks con la sesión de Firmaza
+        transaction_name: `Firmaza — ${signerName || signerEmail}`,
+        transaction_type: 'Notarización remota (RON) — Firmaza',
+        message_subject: subject || `${signerName ? signerName.split(/\s+/)[0] : 'Hola'}, tu documento de Firmaza está listo para notarizar`,
+        message_to_signer: message || 'Tu documento está listo. Haz clic en el botón de abajo para conectarte con un notario por video y completar la notarización. Cuando entres a la videollamada, puedes pedir un notario que hable español.',
+        config_id: 'notarization',
+        signers: [signer],
+        documents: [{ resource: documentUrl, requirement: 'notarization' }],
   };
 
   const allowedStates = String(process.env.PROOF_ALLOWED_NOTARY_STATES || '')
-    .split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
-  if (allowedStates.length) body.allowed_notary_states = allowedStates;
-  if (process.env.PROOF_NOTARY_ID) body.notary_id = process.env.PROOF_NOTARY_ID;
+      .split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+    if (allowedStates.length) body.allowed_notary_states = allowedStates;
+    if (process.env.PROOF_NOTARY_ID) body.notary_id = process.env.PROOF_NOTARY_ID;
 
   const json = await proofFetch(`${PROOF_BASE_URL}/transactions`, { apiKey, method: 'POST', body });
-  return {
-    transactionId: json.id,
-    status: json.status || 'started',
-    raw: json,
-  };
+    return {
+          transactionId: json.id,
+          status: json.status || 'started',
+          raw: json,
+    };
 }
 
 /** Consulta el estado actual de una transacción ya creada. */
 async function getTransactionStatus(transactionId) {
-  const apiKey = process.env.PROOF_API_KEY;
-  if (!apiKey || !transactionId) return null;
-  return proofFetch(`${PROOF_BASE_URL}/transactions/${transactionId}`, { apiKey });
+    const apiKey = process.env.PROOF_API_KEY;
+    if (!apiKey || !transactionId) return null;
+    return proofFetch(`${PROOF_BASE_URL}/transactions/${transactionId}`, { apiKey });
 }
 
 /**
@@ -121,27 +127,27 @@ async function getTransactionStatus(transactionId) {
  * falta llamarla en cada arranque del servidor.
  */
 async function registerWebhook(webhookUrl, subscriptions) {
-  const apiKey = process.env.PROOF_API_KEY;
-  if (!apiKey) return null;
-  const body = {
-    url: webhookUrl,
-    subscriptions: subscriptions || [
-      'transaction.created',
-      'transaction.sent_to_signer',
-      'transaction.meeting.requested',
-      'transaction.meeting.created',
-      'transaction.meeting.failed',
-      'transaction.completed',
-      'transaction.released',
-      'transaction.completed_with_rejections',
-      'transaction.declined',
-      'transaction.canceled',
-      'transaction.expired',
-      'notary.signer_ready',
-      'transaction.notary.assigned',
-    ],
-  };
-  return proofFetch(`${PROOF_BASE_URL_V2}/webhooks`, { apiKey, method: 'POST', body });
+    const apiKey = process.env.PROOF_API_KEY;
+    if (!apiKey) return null;
+    const body = {
+          url: webhookUrl,
+          subscriptions: subscriptions || [
+                  'transaction.created',
+                  'transaction.sent_to_signer',
+                  'transaction.meeting.requested',
+                  'transaction.meeting.created',
+                  'transaction.meeting.failed',
+                  'transaction.completed',
+                  'transaction.released',
+                  'transaction.completed_with_rejections',
+                  'transaction.declined',
+                  'transaction.canceled',
+                  'transaction.expired',
+                  'notary.signer_ready',
+                  'transaction.notary.assigned',
+                ],
+    };
+    return proofFetch(`${PROOF_BASE_URL_V2}/webhooks`, { apiKey, method: 'POST', body });
 }
 
 /**
@@ -151,15 +157,15 @@ async function registerWebhook(webhookUrl, subscriptions) {
  * hacer JSON.parse) porque la firma se calcula sobre esos bytes exactos.
  */
 function verifyWebhookSignature(rawBody, signatureHeader) {
-  const apiKey = process.env.PROOF_API_KEY;
-  if (!apiKey || !signatureHeader) return false;
-  const crypto = require('crypto');
-  const expected = crypto.createHmac('sha256', apiKey).update(rawBody, 'utf8').digest('hex');
-  try {
-    return crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(signatureHeader, 'hex'));
-  } catch {
-    return false; // longitudes distintas u otro formato -> no coincide
-  }
+    const apiKey = process.env.PROOF_API_KEY;
+    if (!apiKey || !signatureHeader) return false;
+    const crypto = require('crypto');
+    const expected = crypto.createHmac('sha256', apiKey).update(rawBody, 'utf8').digest('hex');
+    try {
+          return crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(signatureHeader, 'hex'));
+    } catch {
+          return false; // longitudes distintas u otro formato -> no coincide
+    }
 }
 
 module.exports = { createRonSession, getTransactionStatus, registerWebhook, verifyWebhookSignature };
