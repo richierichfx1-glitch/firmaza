@@ -132,10 +132,9 @@ let prepareMode = 'template';
 let templates = [];
 let selectedTemplateId = null;
 
-document.querySelectorAll('#modeUpload, #modePrepare, #modeReferral'); // (solo referencia, no usado directo)
-
 function setDocMode(mode) {
   docMode = mode;
+  clearErrors();
   document.querySelectorAll('.mode-tabs')[0].querySelectorAll('.mode-tab').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
   $('#modeUpload').style.display = mode === 'upload' ? '' : 'none';
   $('#modePrepare').style.display = mode === 'prepare' ? '' : 'none';
@@ -151,6 +150,7 @@ $('#referralGotIt').addEventListener('click', () => setDocMode('upload'));
 
 function setPrepareMode(mode) {
   prepareMode = mode;
+  clearErrors();
   $('#modePrepare').querySelectorAll('.mode-tab[data-prepare-mode]').forEach((b) => b.classList.toggle('active', b.dataset.prepareMode === mode));
   $('#prepareTemplate').style.display = mode === 'template' ? '' : 'none';
   $('#prepareCustom').style.display = mode === 'custom' ? '' : 'none';
@@ -180,6 +180,7 @@ function renderTemplateList() {
   $('#templateList').querySelectorAll('.template-card').forEach((card) => {
     card.addEventListener('click', () => {
       selectedTemplateId = card.dataset.tid;
+      clearErrors();
       renderTemplateList();
       renderTemplateFields();
     });
@@ -192,50 +193,132 @@ function renderTemplateFields() {
   if (!t) { container.innerHTML = ''; return; }
   container.innerHTML = t.fields.map((f) => {
     const req = f.required ? '' : ' <span class="hint" style="display:inline">(opcional)</span>';
-    if (f.type === 'textarea') {
-      return `<div class="field"><label>${f.label}${req}</label><textarea rows="4" data-fkey="${f.key}"></textarea></div>`;
-    }
-    const type = f.type === 'date' ? 'date' : 'text';
-    return `<div class="field"><label>${f.label}${req}</label><input type="${type}" data-fkey="${f.key}"></div>`;
+    const ph = f.placeholder ? ` placeholder="${f.placeholder.replace(/"/g, '&quot;')}"` : '';
+    const inner = f.type === 'textarea'
+      ? `<textarea rows="4" data-fkey="${f.key}"${ph}></textarea>`
+      : `<input type="${f.type === 'date' ? 'date' : 'text'}" data-fkey="${f.key}"${ph}>`;
+    return `<div class="field" data-field-wrap="${f.key}"><label>${f.label}${req}</label>${inner}<span class="field-error" data-err-for="${f.key}"></span></div>`;
   }).join('');
 }
 
+// --- Validación inline: nada de alert(), resalta el campo exacto y explica
+// qué falta justo debajo de él (o en un banner cuando no hay un campo único
+// al cual apuntar, como "elige una plantilla"). --------------------------------
+function clearErrors() {
+  $('#formError').style.display = 'none';
+  $('#formError').textContent = '';
+  document.querySelectorAll('.field.has-error').forEach((el) => el.classList.remove('has-error'));
+  document.querySelectorAll('.field-error').forEach((el) => { el.style.display = 'none'; el.textContent = ''; });
+  $('#dropzone').classList.remove('has-error');
+  $('#templateList').classList.remove('has-error');
+  $('#errTemplate').classList.remove('show');
+}
+
+function markFieldError(wrapSelector, errSelector, msg) {
+  const wrap = wrapSelector ? $(wrapSelector) : null;
+  const err = errSelector ? $(errSelector) : null;
+  if (wrap) wrap.classList.add('has-error');
+  if (err) { err.textContent = msg; err.style.display = 'block'; }
+  return wrap || err;
+}
+
+function showFormError(msg) {
+  $('#formError').textContent = msg;
+  $('#formError').style.display = 'block';
+}
+
+function scrollToFirstError() {
+  const el = document.querySelector('.field.has-error, .dropzone.has-error, .template-list.has-error');
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
 $('#toStep1').addEventListener('click', async () => {
+  clearErrors();
   const name = $('#signerName').value.trim();
   const email = $('#signerEmail').value.trim();
-  if (!name || !email) return alert('Completa tu nombre y correo.');
+  let hasError = false;
+  if (!name) { markFieldError('#fieldSignerName', '#errSignerName', 'Escribe tu nombre completo.'); hasError = true; }
+  if (!email) { markFieldError('#fieldSignerEmail', '#errSignerEmail', 'Escribe tu correo electrónico.'); hasError = true; }
+  if (hasError) { scrollToFirstError(); return; }
   session.signerName = name;
   session.email = email;
 
   if (docMode === 'upload') {
-    if (!uploadedFile) return alert('Sube tu documento para continuar.');
+    if (!uploadedFile) {
+      $('#dropzone').classList.add('has-error');
+      markFieldError(null, '#errDropzone', 'Sube tu documento para continuar.');
+      scrollToFirstError();
+      return;
+    }
     const base64 = await fileToBase64(uploadedFile);
-    await api('/upload', 'POST', { filename: uploadedFile.name, base64, signerName: name, email });
+    try {
+      await api('/upload', 'POST', { filename: uploadedFile.name, base64, signerName: name, email });
+    } catch (e) { showFormError('No se pudo subir tu documento: ' + e.message); return; }
+    showStep(1);
+    loadIdvMode();
   } else if (docMode === 'prepare' && prepareMode === 'template') {
-    if (!selectedTemplateId) return alert('Elige una plantilla para continuar.');
+    if (!selectedTemplateId) {
+      $('#templateList').classList.add('has-error');
+      markFieldError(null, '#errTemplate', 'Elige una plantilla para continuar.');
+      scrollToFirstError();
+      return;
+    }
     const t = templates.find((x) => x.id === selectedTemplateId);
     const values = {};
-    let missing = null;
     $('#templateFields').querySelectorAll('[data-fkey]').forEach((el) => { values[el.dataset.fkey] = el.value.trim(); });
+    let missingCount = 0;
     for (const f of t.fields) {
-      if (f.required && !values[f.key]) missing = f.label;
+      if (f.required && !values[f.key]) {
+        markFieldError(`[data-field-wrap="${f.key}"]`, `[data-err-for="${f.key}"]`, 'Este campo es obligatorio.');
+        missingCount++;
+      }
     }
-    if (missing) return alert(`Falta el campo "${missing}".`);
+    if (missingCount) {
+      showFormError(missingCount === 1 ? 'Falta completar un campo.' : `Faltan ${missingCount} campos por completar.`);
+      scrollToFirstError();
+      return;
+    }
     try {
-      await api('/prepare-document', 'POST', { mode: 'template', templateId: selectedTemplateId, values, signerName: name, email });
-    } catch (e) { return alert('No se pudo generar el documento: ' + e.message); }
+      const { session: updated } = await api('/prepare-document', 'POST', { mode: 'template', templateId: selectedTemplateId, values, signerName: name, email });
+      session = updated;
+    } catch (e) { showFormError('No se pudo generar el documento: ' + e.message); return; }
+    showDocPreview();
   } else if (docMode === 'prepare' && prepareMode === 'custom') {
     const titulo = $('#customTitulo').value.trim();
     const cuerpo = $('#customCuerpo').value.trim();
     const lugar = $('#customLugar').value.trim();
-    if (!cuerpo) return alert('Escribe el texto de tu carta.');
+    if (!cuerpo) {
+      markFieldError('#fieldCustomCuerpo', '#errCustomCuerpo', 'Escribe el texto de tu carta.');
+      scrollToFirstError();
+      return;
+    }
     try {
-      await api('/prepare-document', 'POST', { mode: 'custom', titulo, cuerpo, lugar, signerName: name, email });
-    } catch (e) { return alert('No se pudo generar el documento: ' + e.message); }
+      const { session: updated } = await api('/prepare-document', 'POST', { mode: 'custom', titulo, cuerpo, lugar, signerName: name, email });
+      session = updated;
+    } catch (e) { showFormError('No se pudo generar el documento: ' + e.message); return; }
+    showDocPreview();
   } else {
     return; // modo referido: no hay nada que subir todavía
   }
+});
 
+// --- Vista previa del documento que Firmaza generó (plantilla o carta) -------
+// El cliente ve exactamente el PDF que se va a usar para la notarización
+// antes de seguir — puede editarlo si algo quedó mal, en vez de descubrirlo
+// hasta la videollamada con el notario.
+function showDocPreview() {
+  $('#docChooser').style.display = 'none';
+  $('#docPreview').style.display = '';
+  $('#docPreviewFrame').src = `/uploads/${session.document.storedAs}`;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+$('#docPreviewEdit').addEventListener('click', () => {
+  $('#docPreview').style.display = 'none';
+  $('#docChooser').style.display = '';
+});
+
+$('#docPreviewConfirm').addEventListener('click', () => {
   showStep(1);
   loadIdvMode();
 });
