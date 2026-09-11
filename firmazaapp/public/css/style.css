@@ -91,10 +91,10 @@ header.nav{
 .brand{display:flex;align-items:center;gap:10px;font-family:var(--font-display);font-weight:600;font-size:21px;letter-spacing:.2px;}
 .brand .dot{width:12px;height:12px;border-radius:50%;background:var(--coral);display:inline-block}
 .brand small{display:block;font-family:var(--font-body);font-weight:500;font-size:11px;color:var(--hero-ink-soft);letter-spacing:.3px;}
-.nav-links{display:flex;gap:26px;font-size:15px;font-weight:500;}
-.nav-links a{text-decoration:none;color:var(--hero-ink);opacity:.85}
+.nav-links{display:flex;gap:26px;font-size:15px;font-weight:500;flex-wrap:nowrap;}
+.nav-links a{text-decoration:none;color:var(--hero-ink);opacity:.85;white-space:nowrap}
 .nav-links a:hover{opacity:1;text-decoration:underline}
-.nav-cta{display:flex;gap:10px;align-items:center}
+.nav-cta{display:flex;gap:10px;align-items:center;flex-shrink:0}
 .btn{
   display:inline-flex;align-items:center;justify-content:center;gap:8px;
   padding:12px 20px;border-radius:999px;font-weight:700;font-size:15px;
@@ -248,6 +248,17 @@ footer .legal{opacity:.6;font-size:12px;margin-top:24px}
 .queue-table{width:100%;border-collapse:collapse}
 .queue-table th,.queue-table td{text-align:left;padding:12px 10px;border-bottom:1px solid var(--line);font-size:14px}
 .queue-table th{color:var(--ink-soft);font-weight:700;text-transform:uppercase;font-size:11.5px;letter-spacing:.4px}
+
+/* Rango medio: el logo con su lema debajo, los 5 enlaces y los 2 botones ya
+   no caben en una sola línea — antes esto hacía que los enlaces más largos
+   ("Cómo funciona", "Por qué Firmaza", "Para notarios") se partieran en dos
+   líneas y se vieran desalineados entre sí. Aquí achicamos el espacio y
+   escondemos el lema (puramente decorativo) para que todo quede en una
+   sola fila prolija hasta donde el menú desaparece por completo. */
+@media (max-width:1180px) and (min-width:881px){
+  .brand small{display:none}
+  .nav-links{gap:16px;font-size:13.5px}
+}
 
 @media (max-width:880px){
   .hero-grid{grid-template-columns:1fr}
