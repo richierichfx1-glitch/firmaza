@@ -124,6 +124,7 @@ header.nav{
 .hero-art{background:rgba(255,255,255,.06);border:1px solid var(--hero-line);border-radius:20px;padding:22px;backdrop-filter:blur(2px)}
 .hero-art .screen{background:var(--bg-raised);border-radius:14px;padding:18px;color:var(--ink)}
 .hero-art .call-row{display:flex;align-items:center;gap:12px;padding:10px;border-radius:10px;background:var(--bg);margin-bottom:10px}
+#heroNotaryRow{transition:opacity .4s ease}
 .hero-art .avatar{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--coral),var(--gold));flex:none}
 .hero-art .name{font-weight:700;font-size:14px}
 .hero-art .meta{font-size:12px;color:var(--ink-soft)}
