@@ -12,6 +12,8 @@
  *   GET  /app                       -> flujo de notarización (SPA)
  *   GET  /notario                   -> panel para notarios activos (RON)
  *   POST /api/sessions              -> crea una sesión de notarización
+ *   GET  /api/document-templates    -> lista de plantillas que Firmaza puede preparar (ver lib/documentTemplates.js)
+ *   POST /api/sessions/:id/prepare-document -> genera un PDF (plantilla o carta dictada por el cliente) y lo deja como el documento de la sesión
  *   POST /api/sessions/:id/upload   -> sube un documento (base64 JSON)
  *   POST /api/sessions/:id/verify   -> guarda datos de verificación de identidad
  *   POST /api/sessions/:id/checkout -> crea sesión de pago (Stripe REST) o modo demo
@@ -33,6 +35,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { URL } = require('url');
 const proofRon = require('./integrations/proof');
+const { renderPdf } = require('./lib/pdf');
+const docTemplates = require('./lib/documentTemplates');
 
 const PORT = process.env.PORT || 8080;
 const DATA_DIR = path.join(__dirname, 'data');
@@ -245,6 +249,59 @@ async function handleApi(req, res, pathname, query) {
       return send(res, 200, { session: s });
     }
 
+    // Genera un documento PDF para el firmante (plantilla llenada por él
+    // mismo, o una carta cuyo texto completo escribió él) y lo deja como si
+    // lo hubiera subido — mismo estado/flujo que /upload de aquí en adelante.
+    // IMPORTANTE: Firmaza NUNCA decide el contenido legal aquí, solo lo
+    // acomoda en formato de documento — ver aviso en lib/documentTemplates.js.
+    if (sub === '/prepare-document' && req.method === 'POST') {
+      const body = await readBody(req);
+      let blocks, docTitle, templateId = null;
+      try {
+        if (body.mode === 'template') {
+          const template = docTemplates.getTemplate(body.templateId);
+          if (!template) return send(res, 400, { error: 'Plantilla no encontrada' });
+          const values = body.values || {};
+          const err = docTemplates.validateValues(template, values);
+          if (err) return send(res, 400, { error: err });
+          blocks = template.render(values);
+          docTitle = template.name;
+          templateId = template.id;
+        } else if (body.mode === 'custom') {
+          const cuerpo = String(body.cuerpo || '').trim();
+          if (!cuerpo) return send(res, 400, { error: 'Escribe el texto de tu carta' });
+          blocks = docTemplates.renderCustomLetter({
+            titulo: body.titulo,
+            cuerpo,
+            autor: s.signerName || body.autor || '',
+            lugar: body.lugar,
+          });
+          docTitle = body.titulo || 'Carta';
+        } else {
+          return send(res, 400, { error: 'mode debe ser "template" o "custom"' });
+        }
+        const pdfBuffer = renderPdf(blocks);
+        const safeName = `${id}-preparado-${Date.now()}.pdf`;
+        fs.writeFileSync(path.join(UPLOADS_DIR, safeName), pdfBuffer);
+        s.document = {
+          originalName: `${docTitle}.pdf`,
+          storedAs: safeName,
+          uploadedAt: new Date().toISOString(),
+          preparedByFirmaza: true,
+          mode: body.mode,
+          templateId,
+        };
+        if (body.signerName) s.signerName = body.signerName;
+        if (body.email) s.email = body.email;
+        s.status = 'documento_subido';
+        s.history.push({ event: 'documento_preparado_por_firmaza', at: new Date().toISOString(), mode: body.mode, templateId });
+        saveSessions(sessions);
+        return send(res, 200, { session: s });
+      } catch (e) {
+        return send(res, 500, { error: e.message });
+      }
+    }
+
     if (sub === '/verify' && req.method === 'POST') {
       const body = await readBody(req);
       const result = await runIdentityVerification(body);
@@ -381,6 +438,11 @@ async function handleApi(req, res, pathname, query) {
     }
 
     return send(res, 404, { error: 'Ruta no encontrada' });
+  }
+
+  // --- Plantillas de documentos (modelo "self-help", ver lib/documentTemplates.js) ---
+  if (pathname === '/api/document-templates' && req.method === 'GET') {
+    return send(res, 200, { templates: docTemplates.listTemplates(), disclaimer: docTemplates.LEGAL_DISCLAIMER });
   }
 
   // --- Notarios (RON activos) -----------------------------------------

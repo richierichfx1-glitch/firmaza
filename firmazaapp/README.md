@@ -43,6 +43,7 @@ incluyendo una videollamada real por WebRTC entre dos pestañas/dispositivos
 | Pagos con **Square** | 🔶 Código real (Payment Links API vía REST), necesita tu `SQUARE_ACCESS_TOKEN` y `SQUARE_LOCATION_ID` de developer.squareup.com |
 | Verificación de identidad (KBA + ID) | 🔶 Punto de integración listo (`runIdentityVerification` en `server.js`), falta elegir proveedor (Stripe Identity, Persona, IDenfy) y sus llaves |
 | RON con **Proof.com** | ✅ Conectado de verdad — ver más abajo (⚠️ el correo que Proof le manda al firmante es mayormente en inglés fijo, ver nota abajo) |
+| El cliente pide que **Firmaza prepare su documento** | ✅ Real — plantillas autollenadas + carta dictada por el cliente, generadas como PDF real sin ninguna dependencia externa (ver más abajo) |
 | RON con **BlueNotary** | 🔶 No se pudo conectar todavía (queda como respaldo) — ver más abajo |
 | Dominio `firmaza.com` | ✅ Comprado, apuntado por DNS a Render, con certificado SSL activo |
 | Hosting | ✅ Desplegado en Render (plan gratuito) |
@@ -105,6 +106,73 @@ https://support.proof.com/hc/en-us/articles/20011382358935). El mensaje en
 español que manda Firmaza (y ahora también el bloque de bienvenida) se lo
 recuerda al firmante.
 
+## Que el cliente pida que Firmaza le prepare el documento
+
+Además de subir su propio archivo, el firmante puede pedir en `/app` (paso 1,
+pestaña "Ayúdenme a prepararlo") que Firmaza le arme el documento. Esto
+generó una pregunta de diseño importante que vale la pena dejar documentada:
+
+**El riesgo real: ejercicio no autorizado de la abogacía.** Un notario sin
+licencia de abogado que redacta o decide el contenido de un documento legal
+para un cliente comete "unauthorized practice of law" (UPL) — en la mayoría
+de los estados de EE.UU. eso tiene sanciones penales, no solo una multa. Las
+guías de notarios son explícitas en que preparar poderes o cartas de
+autorización de viaje para un cliente es justamente ese tipo de UPL. Es
+también el patrón clásico de fraude de "notario público" que ha dañado a la
+comunidad latina en EE.UU. (donde "notario" sí es abogado en el país de
+origen, pero no en EE.UU.) — así que además del riesgo legal para Ricardo,
+es un riesgo reputacional serio para Firmaza si se hace mal.
+
+**El modelo que sí se ha sostenido legalmente** es el de los servicios de
+"self-help document preparation" (LegalZoom y similares): la empresa nunca
+ejerce criterio legal. No aconseja qué documento usar, no decide qué
+cláusulas incluir, no adapta el texto a la situación del cliente. Solo
+ofrece formularios ya redactados donde el cliente mismo llena los espacios
+en blanco, con descargos de responsabilidad constantes ("esto no es
+asesoría legal"). Esto es exactamente lo que implementa `/app`:
+
+- **Plantillas** (`lib/documentTemplates.js`): "Carta poder simple"
+  (autorización puntual, explícitamente NO un Power of Attorney legal
+  amplio), "Carta de consentimiento de viaje para menores", y "Declaración
+  jurada genérica". El cliente llena los campos con sus propios datos y
+  palabras (incluyendo el contenido sustantivo, como el alcance exacto de
+  una autorización o lo que quiere declarar bajo juramento) — Firmaza solo
+  acomoda esos datos en el formato del documento, nunca decide ni sugiere
+  contenido legal.
+- **Carta dictada por el cliente**: para algo fuera de esas plantillas pero
+  todavía simple, el cliente escribe el texto completo de su carta con sus
+  propias palabras; Firmaza únicamente le da formato de documento
+  (encabezado, espacio de firma). Cero redacción de Firmaza.
+- **Documentos más personalizados** ("Es algo más personalizado" en la UI):
+  en vez de que Ricardo los redacte (el escenario de mayor riesgo de UPL),
+  se refiere al cliente a **Richie Tax LLC** (www.richietaxllc.com,
+  816-380-9868) para que lo ayuden ahí. El cliente puede regresar a Firmaza
+  después a subir el documento ya listo y continuar con la notarización.
+  *Nota honesta: referir a otra oficina no es por sí solo lo que resuelve el
+  riesgo de UPL — eso depende de que quien redacte ahí esté autorizado a
+  hacerlo para ese tipo de documento (por ejemplo un abogado con licencia).
+  Vale la pena confirmarlo directamente con esa oficina.*
+- Cada documento generado lleva impreso un aviso legal (no solo en la
+  pantalla, también dentro del PDF) recordando que Firmaza no es un
+  despacho de abogados y no da asesoría legal.
+
+**Importante — estas plantillas no han sido revisadas por un abogado.** Son
+de uso general, redactadas para este prototipo. Antes de usarlas con
+clientes reales, alguien con licencia para ejercer en Missouri (o el estado
+donde opere cada cliente) debería revisarlas — el aviso legal es una
+mitigación de riesgo, no un sustituto de esa revisión.
+
+**Cómo se generan los PDF sin dependencias.** Proof.com solo acepta
+documentos en PDF o DOCX (no HTML). Como este proyecto no tiene acceso a
+`registry.npmjs.org` (ver arriba) y está escrito a propósito sin
+`node_modules`, no se pudo usar una librería como `pdfkit`. En vez de eso,
+`lib/pdf.js` arma un PDF válido a mano — es un formato de texto bien
+documentado, y para texto simple con las fuentes base (Helvetica) no hace
+falta ninguna librería. Soporta párrafos, negritas, salto de línea
+automático con las métricas reales de la fuente, y paginación automática.
+Si más adelante hace falta algo más avanzado (imágenes, tablas), ese es el
+punto donde conviene cambiar a una librería real.
+
 ## Sobre BlueNotary (respaldo, sin conectar)
 
 Investigué su sitio para integrarlo directo y **no tienen una API pública de
@@ -153,6 +221,9 @@ integrations/
   proof.js               integración real con Proof.com (RON) — activa
   bluenotary.js          molde para conectar BlueNotary (respaldo, sin conectar)
   notarycam.js            molde para conectar NotaryCam (respaldo, sin conectar)
+lib/
+  pdf.js                  generador de PDF sin dependencias (ver sección arriba)
+  documentTemplates.js    plantillas "self-help" que el cliente llena (ver sección arriba)
 data/
   notaries.json          tu lista de notarios con RON activo (reemplaza el ejemplo)
   sessions.json           base de datos de sesiones (se crea sola)
