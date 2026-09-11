@@ -15,6 +15,7 @@
  *   POST /api/sessions/:id/upload   -> sube un documento (base64 JSON)
  *   POST /api/sessions/:id/verify   -> guarda datos de verificación de identidad
  *   POST /api/sessions/:id/checkout -> crea sesión de pago (Stripe REST) o modo demo
+ *   POST /api/sessions/:id/confirm-payment -> confirma el regreso exitoso desde Square (ver nota abajo)
  *   POST /api/sessions/:id/sign     -> guarda la firma electrónica (PNG base64)
  *   GET  /api/notaries              -> lista notarios activos (RON)
  *   POST /api/sessions/:id/claim    -> un notario toma la sesión de la cola
@@ -283,6 +284,23 @@ async function handleApi(req, res, pathname, query) {
       } catch (e) {
         return send(res, 500, { error: e.message });
       }
+    }
+
+    // Square redirige aquí (`redirectUrl` de arriba) solo cuando el pago se
+    // completó, así que el frontend llama esta ruta apenas detecta el
+    // regreso (#/pagar-exito/:id) para dejar la sesión marcada como pagada
+    // y poder seguir directo a /notarize. NOTA: esto confía en el redirect
+    // de Square; para producción con más volumen conviene además validar
+    // el pago con el webhook de Square (Payments API) antes de confiar en
+    // este solo paso — por ahora es suficiente para el prototipo.
+    if (sub === '/confirm-payment' && req.method === 'POST') {
+      if (s.payment?.mode !== 'demo') {
+        s.payment = { ...(s.payment || {}), mode: 'square', paidAt: new Date().toISOString() };
+        s.status = 'pagado_square';
+        s.history.push({ event: 'pago_square_confirmado', at: new Date().toISOString() });
+        saveSessions(sessions);
+      }
+      return send(res, 200, { session: s });
     }
 
     if (sub === '/notarize' && req.method === 'POST') {
