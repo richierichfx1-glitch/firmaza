@@ -133,8 +133,12 @@ header.nav{
 .hero-art .screen{background:var(--bg-raised);border-radius:14px;padding:18px;color:var(--ink)}
 .hero-art .call-row{display:flex;align-items:center;gap:12px;padding:10px;border-radius:10px;background:var(--bg);margin-bottom:10px}
 #heroNotaryRow{transition:opacity .4s ease}
-.hero-art .avatar{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--coral),var(--gold));flex:none}
+.hero-art .avatar{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--coral),var(--gold));flex:none;position:relative}
+.hero-art .status-dot{position:absolute;right:-2px;bottom:-2px;width:11px;height:11px;border-radius:50%;background:#3ddc84;border:2px solid var(--bg);animation:pulse 1.8s infinite}
+.hero-art .name-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .hero-art .name{font-weight:700;font-size:14px}
+.hero-art .online-tag{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;color:#1f9d5a;letter-spacing:.2px;text-transform:uppercase}
+.hero-art .online-tag-dot{width:6px;height:6px;border-radius:50%;background:#3ddc84;flex:none}
 .hero-art .meta{font-size:12px;color:var(--ink-soft)}
 .trustbar{background:var(--hero-bg-2);border-top:1px solid var(--hero-line)}
 .trustbar .container{display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px;padding:18px 24px;font-weight:700;font-size:14px;color:var(--hero-ink)}
