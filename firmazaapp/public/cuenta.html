@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mi cuenta — Firmaza</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header class="nav">
+  <div class="container nav-inner">
+    <a href="/" class="brand" style="text-decoration:none"><span class="dot"></span>Firmaza<small>Notarios de confianza, en tu idioma</small></a>
+    <div class="nav-cta">
+      <a class="btn btn-outline" href="/app">Notarizar un documento</a>
+      <button type="button" class="btn btn-ghost" id="logoutBtn" style="display:none">Cerrar sesión</button>
+    </div>
+  </div>
+</header>
+
+<div class="app-shell">
+
+  <!-- Estado: no autenticado — pedir enlace mágico -->
+  <div id="loginView">
+    <div class="card">
+      <h2>Entra a tu cuenta</h2>
+      <p class="help">Escribe tu correo y te mandamos un enlace para entrar — sin contraseñas que recordar.</p>
+
+      <form id="loginForm">
+        <div class="field">
+          <label>Correo</label>
+          <input type="email" id="loginEmail" placeholder="tucorreo@ejemplo.com" required autocomplete="email">
+        </div>
+        <span class="field-error" id="loginError"></span>
+        <button type="submit" class="btn btn-primary btn-block btn-lg" id="loginSubmit">Enviarme el enlace</button>
+      </form>
+
+      <div id="loginSent" style="display:none;text-align:center;padding-top:8px">
+        <div style="font-size:32px;margin-bottom:8px">📬</div>
+        <p style="font-weight:700;margin-bottom:4px">Revisa tu correo</p>
+        <p class="help" id="loginSentEmail" style="margin-top:0"></p>
+      </div>
+
+      <div id="loginDemo" style="display:none;margin-top:18px" class="disclaimer-box">
+        <strong>Modo de prueba:</strong> todavía no hay un servicio de correo configurado, así que aquí está tu enlace de acceso directo:
+        <div style="margin-top:8px"><a id="loginDevLink" href="#" class="referral-pill" style="display:inline-flex"></a></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Estado: autenticado — perfil del cliente -->
+  <div id="dashView" style="display:none">
+    <div class="card" style="margin-bottom:20px">
+      <h2>Hola 👋</h2>
+      <p class="help" id="dashEmail" style="margin-top:0"></p>
+    </div>
+
+    <div class="card" style="margin-bottom:20px">
+      <h2>Mi núcleo</h2>
+      <p class="help">Guarda tus datos aquí una vez y los usamos para prellenar tus próximos documentos — útil para trámites que se repiten, como permisos de viaje.</p>
+
+      <div class="field">
+        <label>Nombre completo</label>
+        <input type="text" id="nucleoNombre" placeholder="Como aparece en tu identificación">
+      </div>
+      <div class="field">
+        <label>Teléfono</label>
+        <input type="text" id="nucleoTelefono" placeholder="(816) 555-0100">
+      </div>
+      <div class="field">
+        <label>Dirección</label>
+        <input type="text" id="nucleoDireccion" placeholder="Calle, número, apartamento">
+      </div>
+      <div class="field">
+        <label>Ciudad y estado</label>
+        <input type="text" id="nucleoCiudadEstado" placeholder="Kansas City, Missouri">
+      </div>
+
+      <div class="field">
+        <label>Familiares (para permisos de viaje y documentos similares)</label>
+        <div id="familiaresList"></div>
+        <button type="button" class="btn btn-outline" id="addFamiliar" style="margin-top:8px">+ Agregar familiar</button>
+      </div>
+
+      <div class="field">
+        <label>Notas</label>
+        <textarea id="nucleoNotas" placeholder="Cualquier otro dato que uses seguido en tus documentos"></textarea>
+      </div>
+
+      <span class="field-error" id="nucleoError"></span>
+      <div style="display:flex;align-items:center;gap:12px">
+        <button type="button" class="btn btn-primary" id="nucleoSave">Guardar mi núcleo</button>
+        <span class="help" id="nucleoSaved" style="display:none;margin:0;color:var(--ok)">Guardado ✓</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Mis documentos</h2>
+      <p class="help">Historial de los documentos que has preparado o notarizado con nosotros.</p>
+      <div id="docsList"></div>
+      <p class="help" id="docsEmpty" style="display:none">Todavía no tienes documentos — cuando notarices uno con este correo, va a aparecer aquí.</p>
+    </div>
+  </div>
+
+</div>
+
+<script src="/js/cuenta.js"></script>
+</body>
+</html>
