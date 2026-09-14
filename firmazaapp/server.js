@@ -499,6 +499,31 @@ async function handleApi(req, res, pathname, query) {
     return send(res, 200, { documentos: docs });
   }
 
+  // Devuelve los datos (plantilla + valores que el cliente escribió, o la
+  // carta dictada) de un documento pasado que Firmaza preparó, para
+  // prellenar el formulario de un documento NUEVO en /app con esos mismos
+  // datos y que el cliente solo tenga que hacer cambios ligeros — Fase 2 de
+  // cuentas de cliente. Solo el dueño del documento (mismo correo que la
+  // sesión) puede leer esto; los documentos que el cliente subió por su
+  // cuenta (sin preparedByFirmaza) no tienen datos estructurados que
+  // reutilizar, así que no aplican aquí.
+  const reuseMatch = pathname.match(/^\/api\/cuenta\/documentos\/([a-f0-9]+)\/reusar$/);
+  if (reuseMatch && req.method === 'GET') {
+    const client = getClientFromRequest(req);
+    if (!client) return send(res, 401, { error: 'No autenticado' });
+    const allSessions = loadSessions();
+    const s = allSessions[reuseMatch[1]];
+    const ownsIt = s && (s.email || '').trim().toLowerCase() === client.email;
+    if (!s || !ownsIt || !s.document || !s.document.preparedByFirmaza || !s.document.inputs) {
+      return send(res, 404, { error: 'No encontramos ese documento para reutilizar' });
+    }
+    return send(res, 200, {
+      mode: s.document.mode,
+      templateId: s.document.templateId || null,
+      inputs: s.document.inputs,
+    });
+  }
+
   const sessions = loadSessions();
 
   // --- Sesiones -------------------------------------------------------
@@ -561,7 +586,7 @@ async function handleApi(req, res, pathname, query) {
     // acomoda en formato de documento — ver aviso en lib/documentTemplates.js.
     if (sub === '/prepare-document' && req.method === 'POST') {
       const body = await readBody(req);
-      let blocks, docTitle, templateId = null;
+      let blocks, docTitle, templateId = null, inputs = null;
       try {
         if (body.mode === 'template') {
           const template = docTemplates.getTemplate(body.templateId);
@@ -577,6 +602,11 @@ async function handleApi(req, res, pathname, query) {
           blocks = template.render(values);
           docTitle = template.name;
           templateId = template.id;
+          // Guardamos los valores que el cliente escribió (no solo el PDF ya
+          // renderizado) para que más adelante pueda "reutilizar" este
+          // documento como base de uno nuevo con cambios ligeros — ver
+          // GET /api/cuenta/documentos/:id/reusar.
+          inputs = values;
         } else if (body.mode === 'custom') {
           const cuerpo = String(body.cuerpo || '').trim();
           if (!cuerpo) return send(res, 400, { error: 'Escribe el texto de tu carta' });
@@ -587,6 +617,7 @@ async function handleApi(req, res, pathname, query) {
             lugar: body.lugar,
           });
           docTitle = body.titulo || 'Carta';
+          inputs = { titulo: body.titulo || '', cuerpo, lugar: body.lugar || '' };
         } else {
           return send(res, 400, { error: 'mode debe ser "template" o "custom"' });
         }
@@ -600,6 +631,7 @@ async function handleApi(req, res, pathname, query) {
           preparedByFirmaza: true,
           mode: body.mode,
           templateId,
+          inputs,
         };
         if (body.signerName) s.signerName = body.signerName;
         if (body.email) s.email = body.email;
