@@ -87,7 +87,12 @@ header.nav{
   position:sticky;top:0;z-index:50;background:var(--hero-bg-1);color:var(--hero-ink);
   border-bottom:3px solid var(--gold);
 }
-.nav-inner{display:flex;align-items:center;justify-content:space-between;height:68px;}
+/* gap aquí es un MÍNIMO garantizado entre marca/links/botones — sin esto,
+   con "justify-content:space-between" el espacio libre se reparte pero en
+   viewports intermedios puede quedar casi en cero y los bloques se ven
+   pegados (ej. el tagline contra "Precios", o "Para notarios" contra
+   "Iniciar sesión"). */
+.nav-inner{display:flex;align-items:center;justify-content:space-between;gap:28px;height:68px;}
 .brand{display:flex;align-items:center;gap:10px;font-family:var(--font-display);font-weight:600;font-size:21px;letter-spacing:.2px;}
 .brand .dot{width:12px;height:12px;border-radius:50%;background:var(--coral);display:inline-block}
 .brand small{display:block;font-family:var(--font-body);font-weight:500;font-size:11px;color:var(--hero-ink-soft);letter-spacing:.3px;}
