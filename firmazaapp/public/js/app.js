@@ -31,7 +31,7 @@ async function ensureSession() {
   const res = await fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
   const data = await res.json();
   session = data.session;
-  $('#sessionPill').textContent = `Sesión ${session.id.slice(0, 6)}`;
+  markSessionPillLive();
   // Si el cliente tiene sesión iniciada (cuenta con núcleo guardado), el
   // servidor ya prellenó signerName/email al crear la sesión — reflejarlo
   // también en el formulario para que no tenga que volver a escribirlos.
@@ -48,13 +48,23 @@ function getResumeSessionIdFromHash() {
   return m ? m[1] : null;
 }
 
+// Antes mostrábamos aquí el ID interno de la sesión (ej. "Sesión a4f24c") —
+// no le sirve de nada al firmante y en una prueba real se veía como un
+// error o texto de depuración. En su lugar mostramos un estado simple que
+// confirma que la sesión quedó activa y protegida.
+function markSessionPillLive() {
+  const pill = $('#sessionPill');
+  pill.textContent = 'Sesión segura';
+  pill.classList.add('live');
+}
+
 async function tryResumeSession(id) {
   try {
     const res = await fetch(`/api/sessions/${id}`);
     if (!res.ok) return false;
     const data = await res.json();
     session = data.session;
-    $('#sessionPill').textContent = `Sesión ${session.id.slice(0, 6)}`;
+    markSessionPillLive();
     // Limpiamos el hash para que un refresh no vuelva a disparar todo esto.
     history.replaceState(null, '', location.pathname + location.search);
     await resumeAfterPayment();
