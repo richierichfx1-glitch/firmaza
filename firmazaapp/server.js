@@ -27,6 +27,16 @@
  *   POST /api/rtc/:room/signal      -> señalización WebRTC (oferta/respuesta/ICE)
  *   GET  /api/rtc/:room/signal      -> long-poll de señales pendientes
  *   POST /webhooks/proof            -> recibe eventos de Proof.com (transacción actualizada)
+ *
+ *   -- Cuentas de cliente (perfil, sin contraseña — enlace mágico por correo) --
+ *   GET  /cuenta                       -> panel del cliente (login si no hay sesión, perfil si la hay)
+ *   POST /api/auth/request-link        -> pide un enlace mágico de acceso para un correo
+ *   GET  /auth/verify?token=...        -> valida el enlace, crea/encuentra al cliente, abre sesión (cookie httpOnly)
+ *   GET  /api/auth/me                  -> quién es el cliente autenticado (o authenticated:false)
+ *   POST /api/auth/logout              -> cierra la sesión del cliente
+ *   GET  /api/cuenta/nucleo            -> datos "núcleo" guardados del cliente (para prellenar documentos futuros)
+ *   PUT  /api/cuenta/nucleo            -> guarda/actualiza el núcleo del cliente
+ *   GET  /api/cuenta/documentos        -> historial de documentos del cliente (por coincidencia de correo)
  */
 
 const http = require('http');
@@ -43,12 +53,16 @@ const DATA_DIR = path.join(__dirname, 'data');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 const NOTARIES_FILE = path.join(DATA_DIR, 'notaries.json');
+const CLIENTS_FILE = path.join(DATA_DIR, 'clients.json');
+const AUTH_FILE = path.join(DATA_DIR, 'auth.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 for (const dir of [DATA_DIR, UPLOADS_DIR]) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 if (!fs.existsSync(SESSIONS_FILE)) fs.writeFileSync(SESSIONS_FILE, '{}');
+if (!fs.existsSync(CLIENTS_FILE)) fs.writeFileSync(CLIENTS_FILE, '{}');
+if (!fs.existsSync(AUTH_FILE)) fs.writeFileSync(AUTH_FILE, JSON.stringify({ magicLinks: {}, loginSessions: {} }));
 
 // ---------------------------------------------------------------------------
 // Almacén simple basado en archivos JSON (suficiente para un MVP funcional;
@@ -65,6 +79,128 @@ function saveSessions(s) { writeJSON(SESSIONS_FILE, s); }
 function loadNotaries() {
   const d = readJSON(NOTARIES_FILE);
   return Array.isArray(d.notaries) ? d.notaries : [];
+}
+
+// --- Clientes (cuentas de firmante) y autenticación -------------------------
+// Perfiles persistentes de cliente, indexados por correo (en minúsculas).
+// Separado por completo de `sessions.json`, que sigue siendo una sesión de
+// notarización anónima por documento. Un cliente puede tener muchas sesiones
+// (buscadas por coincidencia de correo — ver /api/cuenta/documentos).
+function loadClients() { return readJSON(CLIENTS_FILE); }
+function saveClients(c) { writeJSON(CLIENTS_FILE, c); }
+function defaultNucleo() {
+  return { nombreCompleto: '', telefono: '', direccion: '', ciudadEstado: '', familiares: [], notas: '' };
+}
+function sanitizeNucleo(body) {
+  const clamp = (v, max) => String(v == null ? '' : v).slice(0, max);
+  const familiares = Array.isArray(body.familiares)
+    ? body.familiares.slice(0, 20).map((f) => ({
+        nombre: clamp(f && f.nombre, 120),
+        parentesco: clamp(f && f.parentesco, 60),
+        fechaNacimiento: clamp(f && f.fechaNacimiento, 20),
+      }))
+    : [];
+  return {
+    nombreCompleto: clamp(body.nombreCompleto, 160),
+    telefono: clamp(body.telefono, 40),
+    direccion: clamp(body.direccion, 240),
+    ciudadEstado: clamp(body.ciudadEstado, 120),
+    familiares,
+    notas: clamp(body.notas, 1000),
+  };
+}
+
+// Autenticación sin contraseña (enlace mágico por correo). Dos tipos de
+// token de corta/larga vida, guardados en el mismo archivo:
+//   magicLinks[token]    -> { email, createdAt, expiresAt, used }   (~15 min, un solo uso)
+//   loginSessions[token] -> { email, clientId, createdAt, expiresAt } (~30 días, ligado a la cookie httpOnly)
+function loadAuth() {
+  const a = readJSON(AUTH_FILE);
+  if (!a.magicLinks) a.magicLinks = {};
+  if (!a.loginSessions) a.loginSessions = {};
+  return a;
+}
+function saveAuth(a) { writeJSON(AUTH_FILE, a); }
+function purgeExpiredAuth(auth) {
+  const now = Date.now();
+  for (const [t, m] of Object.entries(auth.magicLinks)) {
+    if (m.used || new Date(m.expiresAt).getTime() < now) delete auth.magicLinks[t];
+  }
+  for (const [t, s] of Object.entries(auth.loginSessions)) {
+    if (new Date(s.expiresAt).getTime() < now) delete auth.loginSessions[t];
+  }
+}
+
+function parseCookies(req) {
+  const header = req.headers.cookie || '';
+  const out = {};
+  header.split(';').forEach((pair) => {
+    const idx = pair.indexOf('=');
+    if (idx === -1) return;
+    const k = pair.slice(0, idx).trim();
+    if (!k) return;
+    try { out[k] = decodeURIComponent(pair.slice(idx + 1).trim()); } catch { /* cookie corrupta, se ignora */ }
+  });
+  return out;
+}
+function isHttps(req) {
+  return (req.headers['x-forwarded-proto'] || '').toLowerCase() === 'https';
+}
+const SESSION_COOKIE = 'firmaza_session';
+function sessionCookieHeader(req, token, maxAgeSeconds) {
+  const parts = [
+    `${SESSION_COOKIE}=${token}`,
+    'HttpOnly',
+    'Path=/',
+    `Max-Age=${maxAgeSeconds}`,
+    'SameSite=Lax',
+  ];
+  if (isHttps(req)) parts.push('Secure');
+  return parts.join('; ');
+}
+
+// Devuelve el cliente autenticado a partir de la cookie de sesión, o null.
+function getClientFromRequest(req) {
+  const cookies = parseCookies(req);
+  const token = cookies[SESSION_COOKIE];
+  if (!token) return null;
+  const auth = loadAuth();
+  const ls = auth.loginSessions[token];
+  if (!ls || new Date(ls.expiresAt).getTime() < Date.now()) return null;
+  const clients = loadClients();
+  return clients[ls.email] || null;
+}
+
+// ---------------------------------------------------------------------------
+// Envío de correo — enlace mágico de acceso. REST directo (sin SDK) contra
+// Resend (resend.com). Sin RESEND_API_KEY configurada, el enlace se imprime
+// en la consola del servidor y se devuelve en la respuesta (modo demo), para
+// poder probar el flujo completo sin cuenta de correo transaccional todavía.
+// ---------------------------------------------------------------------------
+async function sendMagicLinkEmail(email, link) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.log(`[DEMO] Enlace mágico para ${email}: ${link}`);
+    return { demo: true };
+  }
+  const from = process.env.EMAIL_FROM || 'Firmaza <onboarding@resend.dev>';
+  const resp = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      from,
+      to: email,
+      subject: 'Tu enlace para entrar a Firmaza',
+      html: `<p>Haz clic en el siguiente enlace para entrar a tu cuenta de Firmaza:</p>
+             <p><a href="${link}">${link}</a></p>
+             <p style="color:#6b645f;font-size:13px">Este enlace expira en 15 minutos y solo funciona una vez. Si tú no lo pediste, puedes ignorar este correo.</p>`,
+    }),
+  });
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    throw new Error(`No se pudo enviar el correo (${resp.status}): ${errText}`);
+  }
+  return { demo: false };
 }
 
 // Señalización WebRTC en memoria: { roomId: [ {from, type, payload, ts}, ... ] }
@@ -201,17 +337,104 @@ async function runIdentityVerification(payload) {
 function newId() { return crypto.randomBytes(8).toString('hex'); }
 
 async function handleApi(req, res, pathname, query) {
+  // --- Cuentas de cliente (enlace mágico, sin contraseña) --------------
+  if (pathname === '/api/auth/request-link' && req.method === 'POST') {
+    const body = await readBody(req);
+    const email = String(body.email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return send(res, 400, { error: 'Escribe un correo válido' });
+    }
+    const auth = loadAuth();
+    purgeExpiredAuth(auth);
+    const recent = Object.values(auth.magicLinks).filter((m) => m.email === email);
+    if (recent.length >= 5) {
+      return send(res, 429, { error: 'Demasiados intentos. Espera unos minutos e inténtalo de nuevo.' });
+    }
+    const token = crypto.randomBytes(32).toString('hex');
+    auth.magicLinks[token] = {
+      email,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      used: false,
+    };
+    saveAuth(auth);
+    const origin = `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers.host}`;
+    const link = `${origin}/auth/verify?token=${token}`;
+    try {
+      const result = await sendMagicLinkEmail(email, link);
+      return send(res, 200, { ok: true, demo: !!result.demo, devLink: result.demo ? link : undefined });
+    } catch (e) {
+      return send(res, 500, { error: e.message });
+    }
+  }
+
+  if (pathname === '/api/auth/me' && req.method === 'GET') {
+    const client = getClientFromRequest(req);
+    if (!client) return send(res, 200, { authenticated: false });
+    return send(res, 200, { authenticated: true, email: client.email, nucleo: client.nucleo || defaultNucleo() });
+  }
+
+  if (pathname === '/api/auth/logout' && req.method === 'POST') {
+    const cookies = parseCookies(req);
+    const token = cookies[SESSION_COOKIE];
+    if (token) {
+      const auth = loadAuth();
+      delete auth.loginSessions[token];
+      saveAuth(auth);
+    }
+    return send(res, 200, { ok: true }, { 'Set-Cookie': sessionCookieHeader(req, '', 0) });
+  }
+
+  if (pathname === '/api/cuenta/nucleo' && req.method === 'GET') {
+    const client = getClientFromRequest(req);
+    if (!client) return send(res, 401, { error: 'No autenticado' });
+    return send(res, 200, { nucleo: client.nucleo || defaultNucleo() });
+  }
+
+  if (pathname === '/api/cuenta/nucleo' && (req.method === 'PUT' || req.method === 'POST')) {
+    const client = getClientFromRequest(req);
+    if (!client) return send(res, 401, { error: 'No autenticado' });
+    const body = await readBody(req);
+    const clients = loadClients();
+    if (!clients[client.email]) clients[client.email] = client;
+    clients[client.email].nucleo = sanitizeNucleo(body);
+    saveClients(clients);
+    return send(res, 200, { nucleo: clients[client.email].nucleo });
+  }
+
+  if (pathname === '/api/cuenta/documentos' && req.method === 'GET') {
+    const client = getClientFromRequest(req);
+    if (!client) return send(res, 401, { error: 'No autenticado' });
+    const allSessions = loadSessions();
+    const docs = Object.values(allSessions)
+      .filter((s) => (s.email || '').trim().toLowerCase() === client.email && s.document)
+      .map((s) => ({
+        id: s.id,
+        createdAt: s.createdAt,
+        status: s.status,
+        titulo: (s.document && s.document.originalName) || 'Documento',
+        archivo: (s.document && s.document.storedAs) || null,
+        firmado: !!s.signature,
+        templateId: (s.document && s.document.templateId) || null,
+        mode: (s.document && s.document.mode) || null,
+        preparedByFirmaza: !!(s.document && s.document.preparedByFirmaza),
+      }))
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    return send(res, 200, { documentos: docs });
+  }
+
   const sessions = loadSessions();
 
   // --- Sesiones -------------------------------------------------------
   if (pathname === '/api/sessions' && req.method === 'POST') {
     const body = await readBody(req);
     const id = newId();
+    const client = getClientFromRequest(req);
     sessions[id] = {
       id,
       createdAt: new Date().toISOString(),
-      signerName: body.signerName || '',
-      email: body.email || '',
+      signerName: body.signerName || (client && client.nucleo && client.nucleo.nombreCompleto) || '',
+      email: body.email || (client && client.email) || '',
       language: body.language || 'es',
       status: 'iniciada',
       document: null,
@@ -496,6 +719,46 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'OPTIONS') return send(res, 204, '');
 
+  // Verificación del enlace mágico: crea (o encuentra) el cliente, abre una
+  // sesión de acceso de 30 días con cookie httpOnly, y manda al firmante a
+  // su cuenta. GET porque es el destino de un clic desde el correo.
+  if (pathname === '/auth/verify' && req.method === 'GET') {
+    const token = u.searchParams.get('token') || '';
+    const auth = loadAuth();
+    const link = auth.magicLinks[token];
+    const valid = link && !link.used && new Date(link.expiresAt).getTime() >= Date.now();
+    if (!valid) {
+      res.writeHead(302, { Location: '/cuenta?error=enlace_invalido' });
+      return res.end();
+    }
+    link.used = true;
+    const clients = loadClients();
+    if (!clients[link.email]) {
+      clients[link.email] = {
+        id: newId(),
+        email: link.email,
+        createdAt: new Date().toISOString(),
+        nucleo: defaultNucleo(),
+      };
+      saveClients(clients);
+    }
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    const THIRTY_DAYS = 30 * 24 * 60 * 60;
+    auth.loginSessions[sessionToken] = {
+      email: link.email,
+      clientId: clients[link.email].id,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + THIRTY_DAYS * 1000).toISOString(),
+    };
+    purgeExpiredAuth(auth);
+    saveAuth(auth);
+    res.writeHead(302, {
+      Location: '/cuenta',
+      'Set-Cookie': sessionCookieHeader(req, sessionToken, THIRTY_DAYS),
+    });
+    return res.end();
+  }
+
   if (pathname === '/webhooks/proof' && req.method === 'POST') {
     try {
       const raw = await readRawBody(req);
@@ -553,6 +816,7 @@ const server = http.createServer(async (req, res) => {
     '/': 'index.html',
     '/app': 'app.html',
     '/notario': 'notario.html',
+    '/cuenta': 'cuenta.html',
   };
   if (routes[pathname]) {
     return serveStatic(req, res, path.join(PUBLIC_DIR, routes[pathname]));
@@ -570,4 +834,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`Firmaza corriendo en http://localhost:${PORT}`);
   console.log(process.env.SQUARE_ACCESS_TOKEN ? 'Square: modo real' : 'Square: modo demo (sin SQUARE_ACCESS_TOKEN)');
+  console.log(process.env.RESEND_API_KEY ? 'Correo (enlaces mágicos): modo real' : 'Correo (enlaces mágicos): modo demo (sin RESEND_API_KEY, el enlace se imprime aquí en la consola)');
 });
