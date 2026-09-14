@@ -32,6 +32,11 @@ async function ensureSession() {
   const data = await res.json();
   session = data.session;
   $('#sessionPill').textContent = `Sesión ${session.id.slice(0, 6)}`;
+  // Si el cliente tiene sesión iniciada (cuenta con núcleo guardado), el
+  // servidor ya prellenó signerName/email al crear la sesión — reflejarlo
+  // también en el formulario para que no tenga que volver a escribirlos.
+  if (session.signerName) $('#signerName').value = session.signerName;
+  if (session.email) $('#signerEmail').value = session.email;
 }
 
 // Square regresa al firmante a /app#/pagar-exito/<id> después de un pago
@@ -323,7 +328,45 @@ $('#docPreviewConfirm').addEventListener('click', () => {
   loadIdvMode();
 });
 
-loadTemplates();
+const templatesReady = loadTemplates();
+
+// --- Reutilizar un documento anterior como base de uno nuevo (Fase 2 de
+// cuentas de cliente) -----------------------------------------------------
+// Desde /cuenta, "Usar como base" manda aquí con ?reusar=<idSesionAnterior>.
+// Solo aplica a documentos que Firmaza preparó (plantilla o carta dictada),
+// que son los que tienen datos estructurados guardados para prellenar — ver
+// GET /api/cuenta/documentos/:id/reusar en server.js.
+async function applyReuseIfRequested() {
+  const reuseId = new URLSearchParams(location.search).get('reusar');
+  if (!reuseId) return;
+  try {
+    const res = await fetch(`/api/cuenta/documentos/${reuseId}/reusar`);
+    if (!res.ok) return; // no es tuyo, no existe, o no es reutilizable — empieza en blanco sin avisar error
+    const data = await res.json();
+    const inputs = data.inputs || {};
+
+    setDocMode('prepare');
+    if (data.mode === 'template' && data.templateId) {
+      await templatesReady;
+      selectedTemplateId = data.templateId;
+      setPrepareMode('template');
+      clearErrors();
+      renderTemplateList();
+      renderTemplateFields();
+      $('#templateFields').querySelectorAll('[data-fkey]').forEach((el) => {
+        if (inputs[el.dataset.fkey] != null) el.value = inputs[el.dataset.fkey];
+      });
+    } else if (data.mode === 'custom') {
+      setPrepareMode('custom');
+      $('#customTitulo').value = inputs.titulo || '';
+      $('#customCuerpo').value = inputs.cuerpo || '';
+      $('#customLugar').value = inputs.lugar || '';
+    } else {
+      return;
+    }
+    $('#reuseNotice').style.display = '';
+  } catch { /* si falla, simplemente se empieza el documento en blanco */ }
+}
 
 // --- Paso 1: identidad --------------------------------------------------------
 async function loadIdvMode() {
@@ -510,5 +553,10 @@ function renderSummary() {
 }
 
 // --- init ----------------------------------------------------------------------
-ensureSession();
+ensureSession().then(() => {
+  // Si veníamos de #/pagar-exito/... ensureSession ya encaminó la sesión a
+  // donde debía (resumeAfterPayment/routeToCurrentStatus) — no hay que
+  // aplicar una reutilización encima de eso.
+  if (!getResumeSessionIdFromHash()) applyReuseIfRequested();
+});
 showStep(0);

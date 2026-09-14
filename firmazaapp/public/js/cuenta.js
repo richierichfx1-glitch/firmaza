@@ -165,6 +165,12 @@ async function loadDocumentos() {
         const label = STATUS_LABELS[d.status] || d.status;
         const live = d.status === 'notarizacion_completada';
         const link = d.archivo ? `<a href="/uploads/${d.archivo}" target="_blank" rel="noopener" class="btn btn-outline">Ver documento</a>` : '';
+        // Solo los documentos que Firmaza preparó (plantilla o carta dictada)
+        // guardan los datos que el cliente escribió, así que solo esos se
+        // pueden reutilizar como base de un documento nuevo.
+        const reuse = d.preparedByFirmaza
+          ? `<a href="/app?reusar=${d.id}" class="btn btn-primary">Usar como base ↻</a>`
+          : '';
         return `
         <div class="doc-row">
           <div>
@@ -174,6 +180,7 @@ async function loadDocumentos() {
           <div class="doc-row-actions">
             <span class="status-pill${live ? ' live' : ''}">${label}</span>
             ${link}
+            ${reuse}
           </div>
         </div>`;
       })
