@@ -109,7 +109,7 @@ header.nav{
 .btn-ghost{background:transparent;color:var(--hero-ink);border:1.5px solid rgba(255,255,255,.5)}
 .btn-ghost:hover{border-color:currentColor}
 .btn-dark{background:var(--hero-bg-1);color:#fff}
-.btn-outline{background:var(--bg-raised);color:var(--hero-bg-1);border:1.5px solid var(--line)}
+.btn-outline{background:var(--bg-raised);color:var(--ink);border:1.5px solid var(--line)}
 .btn-block{width:100%}
 .btn-lg{padding:16px 26px;font-size:17px}
 
@@ -244,10 +244,16 @@ footer .legal{opacity:.6;font-size:12px;margin-top:24px}
 .template-card .t-name{font-weight:700;font-size:14.5px;margin-bottom:3px}
 .template-card .t-desc{font-size:13.5px;color:var(--ink-soft);line-height:1.45}
 
-.referral-card{border:1.5px solid var(--line);border-radius:10px;padding:20px;text-align:center}
-.referral-card .r-title{font-family:var(--font-display);font-size:19px;margin-bottom:8px}
-.referral-card .r-contact{font-family:var(--font-mono);font-size:14px;margin:12px 0}
-.referral-card .r-contact a{color:var(--coral-dark);font-weight:700;text-decoration:none}
+.referral-card{position:relative;overflow:hidden;border:1.5px solid var(--line);border-radius:var(--radius);padding:32px 24px 24px;text-align:center;background:var(--bg-raised);box-shadow:var(--shadow)}
+.referral-card::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(90deg,var(--teal),var(--gold))}
+.referral-eyebrow{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--coral-dark);background:color-mix(in srgb, var(--gold) 20%, var(--bg-raised));border-radius:999px;padding:5px 12px;margin-bottom:18px}
+.referral-logo{display:block;margin:0 auto 20px;max-width:170px;width:100%;height:auto}
+.referral-card .r-title{font-family:var(--font-display);font-size:19px;margin-bottom:8px;color:var(--ink)}
+.referral-actions{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin:18px 0}
+.referral-pill{display:inline-flex;align-items:center;gap:7px;border:1.5px solid var(--line);border-radius:999px;padding:9px 16px;font-size:13.5px;font-weight:700;color:var(--coral-dark);text-decoration:none;background:var(--bg);transition:.15s}
+.referral-pill:hover{border-color:var(--coral);background:color-mix(in srgb, var(--coral) 8%, var(--bg-raised))}
+.referral-pill .referral-ico{flex-shrink:0}
+.referral-footnote{margin-top:16px!important;margin-bottom:20px}
 
 /* ---------- Validación inline (reemplaza los alert() del navegador) ---------- */
 .field-error{display:none;color:#b3261e;font-size:13.5px;font-weight:600;margin-top:5px}
