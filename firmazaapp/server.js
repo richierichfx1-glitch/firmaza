@@ -177,6 +177,83 @@ function getClientFromRequest(req) {
 // en la consola del servidor y se devuelve en la respuesta (modo demo), para
 // poder probar el flujo completo sin cuenta de correo transaccional todavía.
 // ---------------------------------------------------------------------------
+function magicLinkEmailHtml(link) {
+  // Tabla + estilos inline a propósito: así se ve consistente en Gmail,
+  // Outlook, Apple Mail, etc. (el CSS externo del sitio no aplica aquí).
+  // Paleta y tipografía calcadas de public/css/style.css.
+  return `<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tu enlace de acceso — Firmaza</title>
+</head>
+<body style="margin:0;padding:0;background:#f2e9dc;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">Tu enlace para entrar a tu cuenta de Firmaza — válido por 15 minutos.</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f2e9dc;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#fffdf9;border-radius:16px;overflow:hidden;box-shadow:0 2px 10px rgba(28,25,23,.08);">
+
+          <!-- Encabezado -->
+          <tr>
+            <td style="background:#0f3d3e;padding:28px 32px;border-bottom:3px solid #f0a93a;">
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="padding-right:9px;">
+                    <div style="width:11px;height:11px;border-radius:50%;background:#e8583a;font-size:0;line-height:0;">&nbsp;</div>
+                  </td>
+                  <td>
+                    <span style="font-family:Georgia,'Iowan Old Style',serif;font-weight:700;font-size:21px;color:#ffffff;letter-spacing:.2px;">Firmaza</span>
+                  </td>
+                </tr>
+              </table>
+              <div style="font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:12.5px;color:#c9ddda;margin-top:4px;">Notarios de confianza, en tu idioma</div>
+            </td>
+          </tr>
+
+          <!-- Cuerpo -->
+          <tr>
+            <td style="padding:40px 36px 32px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;">
+              <h1 style="margin:0 0 14px;font-family:Georgia,'Iowan Old Style',serif;font-weight:700;font-size:24px;line-height:1.3;color:#1c1917;">Tu enlace de acceso</h1>
+              <p style="margin:0 0 28px;font-size:15.5px;line-height:1.6;color:#4a4440;">Pediste entrar a tu cuenta de Firmaza. Da clic en el botón para continuar — no necesitas contraseña.</p>
+
+              <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 28px;">
+                <tr>
+                  <td style="border-radius:999px;background:#e8583a;">
+                    <a href="${link}" style="display:inline-block;padding:14px 34px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-weight:700;font-size:15.5px;color:#ffffff;text-decoration:none;border-radius:999px;">Entrar a mi cuenta →</a>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:0 0 4px;font-size:13px;color:#9a9188;">¿El botón no funciona? Copia y pega este enlace en tu navegador:</p>
+              <p style="margin:0 0 28px;font-size:12.5px;color:#155e5f;word-break:break-all;">${link}</p>
+
+              <div style="border-top:1px solid #ece3d8;padding-top:18px;">
+                <p style="margin:0;font-size:13px;line-height:1.6;color:#9a9188;">Este enlace expira en 15 minutos y solo funciona una vez. Si tú no lo pediste, puedes ignorar este correo — tu cuenta sigue segura.</p>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Pie -->
+          <tr>
+            <td style="background:#0f3d3e;padding:20px 32px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;text-align:center;">
+              <p style="margin:0;font-size:12.5px;color:#9fc2bd;">Firmaza · Notarios de confianza, en tu idioma</p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+function magicLinkEmailText(link) {
+  return `Tu enlace de acceso — Firmaza\n\nPediste entrar a tu cuenta de Firmaza. Abre este enlace para continuar (no necesitas contraseña):\n\n${link}\n\nEste enlace expira en 15 minutos y solo funciona una vez. Si tú no lo pediste, puedes ignorar este correo.\n\n— Firmaza, notarios de confianza en tu idioma`;
+}
+
 async function sendMagicLinkEmail(email, link) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
@@ -191,9 +268,8 @@ async function sendMagicLinkEmail(email, link) {
       from,
       to: email,
       subject: 'Tu enlace para entrar a Firmaza',
-      html: `<p>Haz clic en el siguiente enlace para entrar a tu cuenta de Firmaza:</p>
-             <p><a href="${link}">${link}</a></p>
-             <p style="color:#6b645f;font-size:13px">Este enlace expira en 15 minutos y solo funciona una vez. Si tú no lo pediste, puedes ignorar este correo.</p>`,
+      html: magicLinkEmailHtml(link),
+      text: magicLinkEmailText(link),
     }),
   });
   if (!resp.ok) {
