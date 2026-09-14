@@ -145,6 +145,10 @@ header.nav{
 .flag-marquee{overflow:hidden;-webkit-mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent)}
 .flag-track{display:flex;gap:24px;width:max-content;font-size:26px;line-height:1;animation:flagScroll 42s linear infinite}
 .flag-marquee:hover .flag-track{animation-play-state:paused}
+/* Tamaño de las banderas cuando Twemoji las reemplaza por SVG (ver script al
+   final del body) — sin esto, el <img> hereda el tamaño nativo del ícono. */
+.flag-track img.emoji{width:1em;height:1em;vertical-align:middle}
+.flag-strip-label img.emoji{width:1em;height:1em;vertical-align:-0.15em;margin:0 2px}
 @keyframes flagScroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
 @media (prefers-reduced-motion: reduce){
   .flag-track{animation:none;transform:none}
