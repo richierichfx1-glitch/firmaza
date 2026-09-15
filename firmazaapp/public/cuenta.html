@@ -58,50 +58,65 @@
     </div>
 
     <div class="card" style="margin-bottom:20px">
-      <h2>Mi núcleo</h2>
-      <p class="help">Guarda tus datos aquí una vez y los usamos para prellenar tus próximos documentos — útil para trámites que se repiten, como permisos de viaje.</p>
-
-      <div class="field">
-        <label>Nombre completo</label>
-        <input type="text" id="nucleoNombre" placeholder="Como aparece en tu identificación">
-      </div>
-      <div class="field">
-        <label>Teléfono</label>
-        <input type="text" id="nucleoTelefono" placeholder="(816) 555-0100">
-      </div>
-      <div class="field">
-        <label>Dirección</label>
-        <input type="text" id="nucleoDireccion" placeholder="Calle, número, apartamento">
-      </div>
-      <div class="field">
-        <label>Ciudad y estado</label>
-        <input type="text" id="nucleoCiudadEstado" placeholder="Kansas City, Missouri">
-      </div>
-
-      <div class="field">
-        <label>Familiares (para permisos de viaje y documentos similares)</label>
-        <div id="familiaresList"></div>
-        <button type="button" class="btn btn-outline" id="addFamiliar" style="margin-top:8px">+ Agregar familiar</button>
-      </div>
-
-      <div class="field">
-        <label>Notas</label>
-        <textarea id="nucleoNotas" placeholder="Cualquier otro dato que uses seguido en tus documentos"></textarea>
-      </div>
-
-      <span class="field-error" id="nucleoError"></span>
-      <div style="display:flex;align-items:center;gap:12px">
-        <button type="button" class="btn btn-primary" id="nucleoSave">Guardar mi núcleo</button>
-        <span class="help" id="nucleoSaved" style="display:none;margin:0;color:var(--ok)">Guardado ✓</span>
+      <h2>Notarizar un documento</h2>
+      <p class="help">Empieza cuando quieras — elige cómo prefieres continuar.</p>
+      <div class="mode-tabs">
+        <a href="/app?modo=upload" class="mode-tab" style="text-decoration:none"><span class="em">📄</span>Ya lo tengo listo</a>
+        <a href="/app?modo=prepare" class="mode-tab" style="text-decoration:none"><span class="em">📝</span>Ayúdenme a prepararlo</a>
+        <a href="/app?modo=referral" class="mode-tab" style="text-decoration:none"><span class="em">🤝</span>Es algo más personalizado</a>
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" style="margin-bottom:20px">
       <h2>Mis documentos</h2>
       <p class="help">Historial de los documentos que has preparado o notarizado con nosotros. Los que preparaste con una plantilla o carta puedes usarlos como base para uno nuevo — útil para trámites que se repiten, como permisos de viaje.</p>
       <div id="docsList"></div>
       <p class="help" id="docsEmpty" style="display:none">Todavía no tienes documentos — cuando notarices uno con este correo, va a aparecer aquí.</p>
     </div>
+
+    <details class="card">
+      <summary class="nucleo-toggle">
+        <span><h2 style="display:inline">Mi núcleo</h2> <span class="help" style="margin:0">— opcional, para prellenar futuros documentos</span></span>
+        <span class="chev">⌄</span>
+      </summary>
+      <div style="margin-top:20px">
+        <p class="help">Guarda tus datos aquí una vez y los usamos para prellenar tus próximos documentos — útil para trámites que se repiten, como permisos de viaje.</p>
+
+        <div class="field">
+          <label>Nombre completo</label>
+          <input type="text" id="nucleoNombre" placeholder="Como aparece en tu identificación">
+        </div>
+        <div class="field">
+          <label>Teléfono</label>
+          <input type="text" id="nucleoTelefono" placeholder="(816) 555-0100">
+        </div>
+        <div class="field">
+          <label>Dirección</label>
+          <input type="text" id="nucleoDireccion" placeholder="Calle, número, apartamento">
+        </div>
+        <div class="field">
+          <label>Ciudad y estado</label>
+          <input type="text" id="nucleoCiudadEstado" placeholder="Kansas City, Missouri">
+        </div>
+
+        <div class="field">
+          <label>Familiares (para permisos de viaje y documentos similares)</label>
+          <div id="familiaresList"></div>
+          <button type="button" class="btn btn-outline" id="addFamiliar" style="margin-top:8px">+ Agregar familiar</button>
+        </div>
+
+        <div class="field">
+          <label>Notas</label>
+          <textarea id="nucleoNotas" placeholder="Cualquier otro dato que uses seguido en tus documentos"></textarea>
+        </div>
+
+        <span class="field-error" id="nucleoError"></span>
+        <div style="display:flex;align-items:center;gap:12px">
+          <button type="button" class="btn btn-primary" id="nucleoSave">Guardar mi núcleo</button>
+          <span class="help" id="nucleoSaved" style="display:none;margin:0;color:var(--ok)">Guardado ✓</span>
+        </div>
+      </div>
+    </details>
   </div>
 
 </div>
