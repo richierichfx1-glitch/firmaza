@@ -89,7 +89,7 @@ function loadNotaries() {
 function loadClients() { return readJSON(CLIENTS_FILE); }
 function saveClients(c) { writeJSON(CLIENTS_FILE, c); }
 function defaultNucleo() {
-  return { nombreCompleto: '', telefono: '', direccion: '', ciudadEstado: '', familiares: [], notas: '' };
+  return { nombreCompleto: '', telefono: '', direccion: '', ciudad: '', estado: '', codigoPostal: '', familiares: [], notas: '' };
 }
 function sanitizeNucleo(body) {
   const clamp = (v, max) => String(v == null ? '' : v).slice(0, max);
@@ -104,7 +104,9 @@ function sanitizeNucleo(body) {
     nombreCompleto: clamp(body.nombreCompleto, 160),
     telefono: clamp(body.telefono, 40),
     direccion: clamp(body.direccion, 240),
-    ciudadEstado: clamp(body.ciudadEstado, 120),
+    ciudad: clamp(body.ciudad, 80),
+    estado: clamp(body.estado, 80),
+    codigoPostal: clamp(body.codigoPostal, 12),
     familiares,
     notas: clamp(body.notas, 1000),
   };
