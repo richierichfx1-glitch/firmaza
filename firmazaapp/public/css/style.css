@@ -243,6 +243,12 @@ footer .legal{opacity:.6;font-size:12px;margin-top:24px}
 .mode-tab.active{border-color:var(--coral);background:color-mix(in srgb, var(--coral) 10%, var(--bg-raised));color:var(--coral-dark)}
 @media (max-width:520px){.mode-tabs{grid-template-columns:1fr}}
 
+/* ---------- Sección plegable (ej. "Mi núcleo" en /cuenta, opcional y secundaria) ---------- */
+.nucleo-toggle{display:flex;align-items:center;justify-content:space-between;gap:14px;cursor:pointer;list-style:none}
+.nucleo-toggle::-webkit-details-marker{display:none}
+.nucleo-toggle .chev{transition:transform .2s;color:var(--coral);font-size:18px;flex:none}
+details[open] .nucleo-toggle .chev{transform:rotate(180deg)}
+
 .disclaimer-box{background:color-mix(in srgb, var(--notice-bg) 16%, var(--bg-raised));border:1px solid color-mix(in srgb, var(--notice-bg) 55%, var(--line));border-radius:10px;padding:14px 16px;font-size:14px;line-height:1.55;color:var(--ink);margin-bottom:18px}
 .disclaimer-box strong{color:var(--coral-dark)}
 
