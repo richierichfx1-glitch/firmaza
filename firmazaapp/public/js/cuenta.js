@@ -117,7 +117,9 @@ $('#nucleoSave').addEventListener('click', async () => {
       nombreCompleto: $('#nucleoNombre').value.trim(),
       telefono: $('#nucleoTelefono').value.trim(),
       direccion: $('#nucleoDireccion').value.trim(),
-      ciudadEstado: $('#nucleoCiudadEstado').value.trim(),
+      ciudad: $('#nucleoCiudad').value.trim(),
+      estado: $('#nucleoEstado').value.trim(),
+      codigoPostal: $('#nucleoCodigoPostal').value.trim(),
       familiares,
       notas: $('#nucleoNotas').value.trim(),
     });
@@ -135,7 +137,9 @@ function fillNucleo(nucleo) {
   $('#nucleoNombre').value = nucleo.nombreCompleto || '';
   $('#nucleoTelefono').value = nucleo.telefono || '';
   $('#nucleoDireccion').value = nucleo.direccion || '';
-  $('#nucleoCiudadEstado').value = nucleo.ciudadEstado || '';
+  $('#nucleoCiudad').value = nucleo.ciudad || '';
+  $('#nucleoEstado').value = nucleo.estado || '';
+  $('#nucleoCodigoPostal').value = nucleo.codigoPostal || '';
   $('#nucleoNotas').value = nucleo.notas || '';
   familiares = Array.isArray(nucleo.familiares) ? nucleo.familiares.map((f) => ({ ...f })) : [];
   renderFamiliares();
