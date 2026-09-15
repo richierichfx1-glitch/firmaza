@@ -94,10 +94,12 @@ function routeToCurrentStatus() {
     case 'notarizacion_completada':
       renderProofSummary();
       showStep(5);
+      maybeShowAccountCta();
       return;
     case 'firmado':
       renderSummary();
       showStep(5);
+      maybeShowAccountCta();
       return;
     case 'enviado_a_notario_proof':
       showStep(3);
@@ -445,6 +447,7 @@ async function pollProofStatus() {
     if (session.status === 'notarizacion_completada') {
       renderProofSummary();
       showStep(5);
+      maybeShowAccountCta();
       return;
     }
     if (session.status === 'notarizacion_rechazada') {
@@ -551,6 +554,62 @@ $('#finishBtn').addEventListener('click', async () => {
   session = updated;
   renderSummary();
   showStep(5);
+  maybeShowAccountCta();
+});
+
+// --- CTA para crear cuenta justo después de notarizar (Fase 2 de cuentas de
+// cliente) — solo aparece si el firmante todavía no tiene una sesión de
+// cliente iniciada, para que este documento y los futuros queden guardados
+// bajo su correo sin repetir el flujo de captura de datos cada vez. --------
+async function maybeShowAccountCta() {
+  const cta = $('#accountCta');
+  try {
+    const res = await fetch('/api/auth/me');
+    const data = await res.json();
+    if (data.authenticated) { cta.style.display = 'none'; return; }
+  } catch {
+    return; // si falla la consulta, no mostramos el CTA en vez de arriesgar un error visible
+  }
+  $('#accountCtaEmail').textContent = session.email || '';
+  $('#accountCtaForm').style.display = '';
+  $('#accountCtaSent').style.display = 'none';
+  const err = $('#accountCtaError');
+  err.style.display = 'none';
+  err.textContent = '';
+  const btn = $('#accountCtaBtn');
+  btn.disabled = false;
+  btn.textContent = 'Crear mi cuenta gratis';
+  cta.style.display = '';
+}
+
+$('#accountCtaBtn').addEventListener('click', async () => {
+  const btn = $('#accountCtaBtn');
+  const err = $('#accountCtaError');
+  err.style.display = 'none';
+  err.textContent = '';
+  btn.disabled = true;
+  btn.textContent = 'Enviando…';
+  try {
+    const res = await fetch('/api/auth/request-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: session.email }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'No se pudo enviar el enlace');
+    $('#accountCtaForm').style.display = 'none';
+    $('#accountCtaSent').style.display = '';
+    if (data.demo && data.devLink) {
+      $('#accountCtaSent').innerHTML =
+        '<div class="help" style="font-weight:700;color:var(--ink)">📬 Revisa tu correo para confirmar tu cuenta.</div>' +
+        `<div style="margin-top:8px"><a href="${data.devLink}" class="referral-pill" style="display:inline-flex">Entrar ahora →</a></div>`;
+    }
+  } catch (e) {
+    err.textContent = e.message;
+    err.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Crear mi cuenta gratis';
+  }
 });
 
 function renderSummary() {
@@ -561,6 +620,18 @@ function renderSummary() {
     <div class="summary-row"><span>Folio de auditoría</span><strong style="font-family:monospace">${session.signature.auditHash.slice(0, 16)}…</strong></div>
   `;
 }
+
+// --- Modo inicial vía querystring (ej. ?modo=upload) --------------------------
+// Los botones "Notarizar un documento" en /cuenta mandan aquí con
+// ?modo=upload|prepare|referral para saltar directo al modo elegido, en vez
+// de mostrar siempre "Ya lo tengo listo" (el modo por defecto del HTML).
+function applyModeFromQuery() {
+  const params = new URLSearchParams(location.search);
+  if (params.get('reusar')) return; // applyReuseIfRequested ya deja el modo correcto
+  const modo = params.get('modo');
+  if (modo === 'upload' || modo === 'prepare' || modo === 'referral') setDocMode(modo);
+}
+applyModeFromQuery();
 
 // --- init ----------------------------------------------------------------------
 ensureSession().then(() => {
