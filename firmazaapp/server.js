@@ -440,7 +440,11 @@ async function handleApi(req, res, pathname, query) {
       const result = await sendMagicLinkEmail(email, link);
       return send(res, 200, { ok: true, demo: !!result.demo, devLink: result.demo ? link : undefined });
     } catch (e) {
-      return send(res, 500, { error: e.message });
+      // No exponemos el error crudo del proveedor de correo (puede incluir
+      // detalles internos de la cuenta) — lo registramos en el servidor y
+      // mostramos al cliente un mensaje genérico y accionable.
+      console.error('[email] No se pudo enviar el enlace mágico:', e.message);
+      return send(res, 500, { error: 'No pudimos enviarte el correo en este momento. Inténtalo de nuevo en unos minutos, o escríbenos si el problema sigue.' });
     }
   }
 
