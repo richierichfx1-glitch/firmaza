@@ -1,11 +1,18 @@
 /**
- * Firmaza — servidor de aplicación (sin dependencias externas)
+ * Firmaza — servidor de aplicación (sin dependencias externas de framework)
  * ------------------------------------------------------------
- * Este proyecto se construyó usando SOLO módulos nativos de Node.js porque
- * el registro de npm no es accesible desde este sandbox. Funciona igual:
- * Node 18+ trae `fetch` nativo, así que las integraciones con Stripe y
- * proveedores de verificación de identidad se hacen con REST directo,
- * sin necesidad de sus SDKs oficiales.
+ * Este proyecto usa solo módulos nativos de Node.js para todo lo que no sea
+ * la base de datos (Node 18+ trae `fetch` nativo, así que las integraciones
+ * con Square y Proof.com se hacen con REST directo, sin SDKs oficiales).
+ *
+ * Persistencia: Postgres real (ver lib/db.js), no archivos locales. Antes
+ * este servidor guardaba sesiones/clientes/autenticación en archivos JSON
+ * dentro de `data/`, en el propio disco del contenedor — sin un disco
+ * persistente adjunto en Render, ese disco se reinicia desde cero en cada
+ * deploy o reinicio, así que cualquier cuenta de cliente, sesión o
+ * documento subido se perdía. Ahora todo eso (incluidos los archivos
+ * subidos/generados) vive en Postgres, que sí sobrevive deploys y reinicios.
+ * Ver lib/db.js para el detalle de las tablas y consultas.
  *
  * Rutas principales:
  *   GET  /                          -> landing page
@@ -27,6 +34,7 @@
  *   POST /api/rtc/:room/signal      -> señalización WebRTC (oferta/respuesta/ICE)
  *   GET  /api/rtc/:room/signal      -> long-poll de señales pendientes
  *   POST /webhooks/proof            -> recibe eventos de Proof.com (transacción actualizada)
+ *   GET  /uploads/:id               -> sirve un archivo guardado en la base de datos (documento/firma)
  *
  *   -- Cuentas de cliente (perfil, sin contraseña — enlace mágico por correo) --
  *   GET  /cuenta                       -> panel del cliente (login si no hay sesión, perfil si la hay)
@@ -47,50 +55,24 @@ const { URL } = require('url');
 const proofRon = require('./integrations/proof');
 const { renderPdf } = require('./lib/pdf');
 const docTemplates = require('./lib/documentTemplates');
+const db = require('./lib/db');
 
 const PORT = process.env.PORT || 8080;
 const DATA_DIR = path.join(__dirname, 'data');
-const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
-const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
+// notaries.json sigue siendo un archivo estático dentro del repo (config
+// editada a mano por el equipo, no datos generados por usuarios en runtime),
+// así que no necesita vivir en la base de datos — se redeploya con el código.
 const NOTARIES_FILE = path.join(DATA_DIR, 'notaries.json');
-const CLIENTS_FILE = path.join(DATA_DIR, 'clients.json');
-const AUTH_FILE = path.join(DATA_DIR, 'auth.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
-for (const dir of [DATA_DIR, UPLOADS_DIR]) {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-}
-if (!fs.existsSync(SESSIONS_FILE)) fs.writeFileSync(SESSIONS_FILE, '{}');
-if (!fs.existsSync(CLIENTS_FILE)) fs.writeFileSync(CLIENTS_FILE, '{}');
-if (!fs.existsSync(AUTH_FILE)) fs.writeFileSync(AUTH_FILE, JSON.stringify({ magicLinks: {}, loginSessions: {} }));
-
-// ---------------------------------------------------------------------------
-// Almacén simple basado en archivos JSON (suficiente para un MVP funcional;
-// para producción real, cambiar por Postgres/SQLite con transacciones).
-// ---------------------------------------------------------------------------
 function readJSON(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
 }
-function writeJSON(file, obj) {
-  fs.writeFileSync(file, JSON.stringify(obj, null, 2));
-}
-function loadSessions() { return readJSON(SESSIONS_FILE); }
-function saveSessions(s) { writeJSON(SESSIONS_FILE, s); }
 function loadNotaries() {
   const d = readJSON(NOTARIES_FILE);
   return Array.isArray(d.notaries) ? d.notaries : [];
 }
 
-// --- Clientes (cuentas de firmante) y autenticación -------------------------
-// Perfiles persistentes de cliente, indexados por correo (en minúsculas).
-// Separado por completo de `sessions.json`, que sigue siendo una sesión de
-// notarización anónima por documento. Un cliente puede tener muchas sesiones
-// (buscadas por coincidencia de correo — ver /api/cuenta/documentos).
-function loadClients() { return readJSON(CLIENTS_FILE); }
-function saveClients(c) { writeJSON(CLIENTS_FILE, c); }
-function defaultNucleo() {
-  return { nombreCompleto: '', telefono: '', direccion: '', ciudad: '', estado: '', codigoPostal: '', familiares: [], notas: '' };
-}
 function sanitizeNucleo(body) {
   const clamp = (v, max) => String(v == null ? '' : v).slice(0, max);
   const familiares = Array.isArray(body.familiares)
@@ -110,27 +92,6 @@ function sanitizeNucleo(body) {
     familiares,
     notas: clamp(body.notas, 1000),
   };
-}
-
-// Autenticación sin contraseña (enlace mágico por correo). Dos tipos de
-// token de corta/larga vida, guardados en el mismo archivo:
-//   magicLinks[token]    -> { email, createdAt, expiresAt, used }   (~15 min, un solo uso)
-//   loginSessions[token] -> { email, clientId, createdAt, expiresAt } (~30 días, ligado a la cookie httpOnly)
-function loadAuth() {
-  const a = readJSON(AUTH_FILE);
-  if (!a.magicLinks) a.magicLinks = {};
-  if (!a.loginSessions) a.loginSessions = {};
-  return a;
-}
-function saveAuth(a) { writeJSON(AUTH_FILE, a); }
-function purgeExpiredAuth(auth) {
-  const now = Date.now();
-  for (const [t, m] of Object.entries(auth.magicLinks)) {
-    if (m.used || new Date(m.expiresAt).getTime() < now) delete auth.magicLinks[t];
-  }
-  for (const [t, s] of Object.entries(auth.loginSessions)) {
-    if (new Date(s.expiresAt).getTime() < now) delete auth.loginSessions[t];
-  }
 }
 
 function parseCookies(req) {
@@ -162,15 +123,13 @@ function sessionCookieHeader(req, token, maxAgeSeconds) {
 }
 
 // Devuelve el cliente autenticado a partir de la cookie de sesión, o null.
-function getClientFromRequest(req) {
+async function getClientFromRequest(req) {
   const cookies = parseCookies(req);
   const token = cookies[SESSION_COOKIE];
   if (!token) return null;
-  const auth = loadAuth();
-  const ls = auth.loginSessions[token];
-  if (!ls || new Date(ls.expiresAt).getTime() < Date.now()) return null;
-  const clients = loadClients();
-  return clients[ls.email] || null;
+  const ls = await db.getLoginSession(token);
+  if (!ls) return null;
+  return db.getClientByEmail(ls.email);
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +241,8 @@ async function sendMagicLinkEmail(email, link) {
 }
 
 // Señalización WebRTC en memoria: { roomId: [ {from, type, payload, ts}, ... ] }
+// (No necesita persistencia real — son mensajes efímeros de una llamada en
+// curso, no datos que deban sobrevivir un reinicio del servidor.)
 const rtcRooms = {};
 
 function send(res, status, body, headers = {}) {
@@ -414,6 +375,14 @@ async function runIdentityVerification(payload) {
 
 function newId() { return crypto.randomBytes(8).toString('hex'); }
 
+// Adivina el content-type de un archivo subido a partir de su nombre, para
+// poder servirlo de vuelta con el header correcto (el navegador decide si
+// mostrarlo o descargarlo según esto).
+function guessContentType(filename) {
+  const ext = path.extname(String(filename || '')).toLowerCase();
+  return MIME[ext] || 'application/octet-stream';
+}
+
 async function handleApi(req, res, pathname, query) {
   // --- Cuentas de cliente (enlace mágico, sin contraseña) --------------
   if (pathname === '/api/auth/request-link' && req.method === 'POST') {
@@ -422,20 +391,13 @@ async function handleApi(req, res, pathname, query) {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return send(res, 400, { error: 'Escribe un correo válido' });
     }
-    const auth = loadAuth();
-    purgeExpiredAuth(auth);
-    const recent = Object.values(auth.magicLinks).filter((m) => m.email === email);
-    if (recent.length >= 5) {
+    const recentCount = await db.countActiveMagicLinksForEmail(email);
+    if (recentCount >= 5) {
       return send(res, 429, { error: 'Demasiados intentos. Espera unos minutos e inténtalo de nuevo.' });
     }
     const token = crypto.randomBytes(32).toString('hex');
-    auth.magicLinks[token] = {
-      email,
-      createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      used: false,
-    };
-    saveAuth(auth);
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    await db.createMagicLink(token, email, expiresAt);
     const origin = `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers.host}`;
     const link = `${origin}/auth/verify?token=${token}`;
     try {
@@ -451,45 +413,39 @@ async function handleApi(req, res, pathname, query) {
   }
 
   if (pathname === '/api/auth/me' && req.method === 'GET') {
-    const client = getClientFromRequest(req);
+    const client = await getClientFromRequest(req);
     if (!client) return send(res, 200, { authenticated: false });
-    return send(res, 200, { authenticated: true, email: client.email, nucleo: client.nucleo || defaultNucleo() });
+    return send(res, 200, { authenticated: true, email: client.email, nucleo: client.nucleo || db.defaultNucleo() });
   }
 
   if (pathname === '/api/auth/logout' && req.method === 'POST') {
     const cookies = parseCookies(req);
     const token = cookies[SESSION_COOKIE];
-    if (token) {
-      const auth = loadAuth();
-      delete auth.loginSessions[token];
-      saveAuth(auth);
-    }
+    if (token) await db.deleteLoginSession(token);
     return send(res, 200, { ok: true }, { 'Set-Cookie': sessionCookieHeader(req, '', 0) });
   }
 
   if (pathname === '/api/cuenta/nucleo' && req.method === 'GET') {
-    const client = getClientFromRequest(req);
+    const client = await getClientFromRequest(req);
     if (!client) return send(res, 401, { error: 'No autenticado' });
-    return send(res, 200, { nucleo: client.nucleo || defaultNucleo() });
+    return send(res, 200, { nucleo: client.nucleo || db.defaultNucleo() });
   }
 
   if (pathname === '/api/cuenta/nucleo' && (req.method === 'PUT' || req.method === 'POST')) {
-    const client = getClientFromRequest(req);
+    const client = await getClientFromRequest(req);
     if (!client) return send(res, 401, { error: 'No autenticado' });
     const body = await readBody(req);
-    const clients = loadClients();
-    if (!clients[client.email]) clients[client.email] = client;
-    clients[client.email].nucleo = sanitizeNucleo(body);
-    saveClients(clients);
-    return send(res, 200, { nucleo: clients[client.email].nucleo });
+    const nucleo = sanitizeNucleo(body);
+    await db.updateClientNucleo(client.email, nucleo);
+    return send(res, 200, { nucleo });
   }
 
   if (pathname === '/api/cuenta/documentos' && req.method === 'GET') {
-    const client = getClientFromRequest(req);
+    const client = await getClientFromRequest(req);
     if (!client) return send(res, 401, { error: 'No autenticado' });
-    const allSessions = loadSessions();
-    const docs = Object.values(allSessions)
-      .filter((s) => (s.email || '').trim().toLowerCase() === client.email && s.document)
+    const clientSessions = await db.getSessionsByEmail(client.email);
+    const docs = clientSessions
+      .filter((s) => s.document)
       .map((s) => ({
         id: s.id,
         createdAt: s.createdAt,
@@ -515,10 +471,9 @@ async function handleApi(req, res, pathname, query) {
   // reutilizar, así que no aplican aquí.
   const reuseMatch = pathname.match(/^\/api\/cuenta\/documentos\/([a-f0-9]+)\/reusar$/);
   if (reuseMatch && req.method === 'GET') {
-    const client = getClientFromRequest(req);
+    const client = await getClientFromRequest(req);
     if (!client) return send(res, 401, { error: 'No autenticado' });
-    const allSessions = loadSessions();
-    const s = allSessions[reuseMatch[1]];
+    const s = await db.getSession(reuseMatch[1]);
     const ownsIt = s && (s.email || '').trim().toLowerCase() === client.email;
     if (!s || !ownsIt || !s.document || !s.document.preparedByFirmaza || !s.document.inputs) {
       return send(res, 404, { error: 'No encontramos ese documento para reutilizar' });
@@ -530,14 +485,12 @@ async function handleApi(req, res, pathname, query) {
     });
   }
 
-  const sessions = loadSessions();
-
   // --- Sesiones -------------------------------------------------------
   if (pathname === '/api/sessions' && req.method === 'POST') {
     const body = await readBody(req);
     const id = newId();
-    const client = getClientFromRequest(req);
-    sessions[id] = {
+    const client = await getClientFromRequest(req);
+    const s = {
       id,
       createdAt: new Date().toISOString(),
       signerName: body.signerName || (client && client.nucleo && client.nucleo.nombreCompleto) || '',
@@ -551,15 +504,15 @@ async function handleApi(req, res, pathname, query) {
       notaryId: null,
       history: [{ event: 'sesion_creada', at: new Date().toISOString() }],
     };
-    saveSessions(sessions);
-    return send(res, 200, { session: sessions[id] });
+    await db.saveSession(s);
+    return send(res, 200, { session: s });
   }
 
   const sessionMatch = pathname.match(/^\/api\/sessions\/([a-f0-9]+)(\/.*)?$/);
   if (sessionMatch) {
     const id = sessionMatch[1];
     const sub = sessionMatch[2] || '';
-    const s = sessions[id];
+    const s = await db.getSession(id);
     if (!s) return send(res, 404, { error: 'Sesión no encontrada' });
 
     if (sub === '' && req.method === 'GET') {
@@ -569,10 +522,11 @@ async function handleApi(req, res, pathname, query) {
     if (sub === '/upload' && req.method === 'POST') {
       const body = await readBody(req);
       if (!body.filename || !body.base64) return send(res, 400, { error: 'Falta filename o base64' });
-      const safeName = `${id}-${Date.now()}-${body.filename.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
-      const filePath = path.join(UPLOADS_DIR, safeName);
+      const dataUriMatch = /^data:([^;]+);base64,/.exec(body.base64);
+      const contentType = dataUriMatch ? dataUriMatch[1] : guessContentType(body.filename);
       const base64Data = body.base64.replace(/^data:.*;base64,/, '');
-      fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
+      const safeName = `${id}-${Date.now()}-${body.filename.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+      await db.saveFile(safeName, Buffer.from(base64Data, 'base64'), contentType);
       s.document = { originalName: body.filename, storedAs: safeName, uploadedAt: new Date().toISOString() };
       // El nombre/correo del firmante se capturan en este mismo paso del flujo
       // (paso 0 en app.js); los guardamos aquí porque /api/sessions se crea
@@ -581,7 +535,7 @@ async function handleApi(req, res, pathname, query) {
       if (body.email) s.email = body.email;
       s.status = 'documento_subido';
       s.history.push({ event: 'documento_subido', at: new Date().toISOString() });
-      saveSessions(sessions);
+      await db.saveSession(s);
       return send(res, 200, { session: s });
     }
 
@@ -629,7 +583,7 @@ async function handleApi(req, res, pathname, query) {
         }
         const pdfBuffer = renderPdf(blocks);
         const safeName = `${id}-preparado-${Date.now()}.pdf`;
-        fs.writeFileSync(path.join(UPLOADS_DIR, safeName), pdfBuffer);
+        await db.saveFile(safeName, pdfBuffer, 'application/pdf');
         s.document = {
           originalName: `${docTitle}.pdf`,
           storedAs: safeName,
@@ -643,7 +597,7 @@ async function handleApi(req, res, pathname, query) {
         if (body.email) s.email = body.email;
         s.status = 'documento_subido';
         s.history.push({ event: 'documento_preparado_por_firmaza', at: new Date().toISOString(), mode: body.mode, templateId });
-        saveSessions(sessions);
+        await db.saveSession(s);
         return send(res, 200, { session: s });
       } catch (e) {
         return send(res, 500, { error: e.message });
@@ -662,7 +616,7 @@ async function handleApi(req, res, pathname, query) {
       };
       s.status = 'identidad_verificada';
       s.history.push({ event: 'identidad_verificada', at: new Date().toISOString(), result: result.mode });
-      saveSessions(sessions);
+      await db.saveSession(s);
       return send(res, 200, { session: s });
     }
 
@@ -680,11 +634,11 @@ async function handleApi(req, res, pathname, query) {
           s.payment = { mode: 'demo', amount: amountCents / 100, paidAt: new Date().toISOString() };
           s.status = 'pagado_demo';
           s.history.push({ event: 'pago_demo', at: new Date().toISOString() });
-          saveSessions(sessions);
+          await db.saveSession(s);
           return send(res, 200, { demo: true, session: s });
         }
         s.payment = { mode: 'square', paymentLinkId: result.id, amount: amountCents / 100 };
-        saveSessions(sessions);
+        await db.saveSession(s);
         return send(res, 200, { demo: false, url: result.url });
       } catch (e) {
         return send(res, 500, { error: e.message });
@@ -703,7 +657,7 @@ async function handleApi(req, res, pathname, query) {
         s.payment = { ...(s.payment || {}), mode: 'square', paidAt: new Date().toISOString() };
         s.status = 'pagado_square';
         s.history.push({ event: 'pago_square_confirmado', at: new Date().toISOString() });
-        saveSessions(sessions);
+        await db.saveSession(s);
       }
       return send(res, 200, { session: s });
     }
@@ -723,7 +677,7 @@ async function handleApi(req, res, pathname, query) {
         if (!result) {
           // Sin PROOF_API_KEY configurada: seguimos en modo demo (cola interna + WebRTC).
           s.history.push({ event: 'notarize_modo_demo', at: new Date().toISOString() });
-          saveSessions(sessions);
+          await db.saveSession(s);
           return send(res, 200, { demo: true, session: s });
         }
         s.proof = {
@@ -733,7 +687,7 @@ async function handleApi(req, res, pathname, query) {
         };
         s.status = 'enviado_a_notario_proof';
         s.history.push({ event: 'enviado_a_proof', at: new Date().toISOString(), transactionId: result.transactionId });
-        saveSessions(sessions);
+        await db.saveSession(s);
         return send(res, 200, { demo: false, session: s });
       } catch (e) {
         return send(res, 500, { error: e.message });
@@ -747,7 +701,7 @@ async function handleApi(req, res, pathname, query) {
         s.proof.status = tx?.status || s.proof.status;
         if (tx?.status === 'completed' || tx?.status === 'released') s.status = 'notarizacion_completada';
         else if (tx?.status === 'declined') s.status = 'notarizacion_rechazada';
-        saveSessions(sessions);
+        await db.saveSession(s);
         return send(res, 200, { session: s, transaction: tx });
       } catch (e) {
         return send(res, 500, { error: e.message });
@@ -760,7 +714,7 @@ async function handleApi(req, res, pathname, query) {
       s.status = 'en_sesion_con_notario';
       s.roomId = s.roomId || newId();
       s.history.push({ event: 'notario_tomo_sesion', at: new Date().toISOString(), notaryId: body.notaryId });
-      saveSessions(sessions);
+      await db.saveSession(s);
       return send(res, 200, { session: s });
     }
 
@@ -768,8 +722,7 @@ async function handleApi(req, res, pathname, query) {
       const body = await readBody(req);
       if (!body.signaturePng) return send(res, 400, { error: 'Falta signaturePng' });
       const safeName = `${id}-firma-${Date.now()}.png`;
-      const filePath = path.join(UPLOADS_DIR, safeName);
-      fs.writeFileSync(filePath, Buffer.from(body.signaturePng.replace(/^data:.*;base64,/, ''), 'base64'));
+      await db.saveFile(safeName, Buffer.from(body.signaturePng.replace(/^data:.*;base64,/, ''), 'base64'), 'image/png');
       const hash = crypto.createHash('sha256')
         .update(JSON.stringify({ id, doc: s.document, at: Date.now() }))
         .digest('hex');
@@ -781,7 +734,7 @@ async function handleApi(req, res, pathname, query) {
       };
       s.status = 'firmado';
       s.history.push({ event: 'documento_firmado', at: new Date().toISOString(), auditHash: hash });
-      saveSessions(sessions);
+      await db.saveSession(s);
       return send(res, 200, { session: s });
     }
 
@@ -799,9 +752,7 @@ async function handleApi(req, res, pathname, query) {
   }
 
   if (pathname === '/api/queue' && req.method === 'GET') {
-    const pending = Object.values(sessions).filter((s) =>
-      ['pagado_demo', 'identidad_verificada'].includes(s.status) || s.status === 'en_cola'
-    );
+    const pending = await db.getSessionsByStatuses(['pagado_demo', 'identidad_verificada', 'en_cola']);
     return send(res, 200, { queue: pending });
   }
 
@@ -838,39 +789,29 @@ const server = http.createServer(async (req, res) => {
   // su cuenta. GET porque es el destino de un clic desde el correo.
   if (pathname === '/auth/verify' && req.method === 'GET') {
     const token = u.searchParams.get('token') || '';
-    const auth = loadAuth();
-    const link = auth.magicLinks[token];
-    const valid = link && !link.used && new Date(link.expiresAt).getTime() >= Date.now();
-    if (!valid) {
+    try {
+      const link = await db.getMagicLink(token);
+      const valid = link && !link.used && new Date(link.expiresAt).getTime() >= Date.now();
+      if (!valid) {
+        res.writeHead(302, { Location: '/cuenta?error=enlace_invalido' });
+        return res.end();
+      }
+      await db.markMagicLinkUsed(token);
+      const client = await db.createClientIfMissing(link.email, newId(), new Date().toISOString());
+      const sessionToken = crypto.randomBytes(32).toString('hex');
+      const THIRTY_DAYS = 30 * 24 * 60 * 60;
+      const expiresAt = new Date(Date.now() + THIRTY_DAYS * 1000).toISOString();
+      await db.createLoginSession(sessionToken, link.email, client.id, expiresAt);
+      res.writeHead(302, {
+        Location: '/cuenta',
+        'Set-Cookie': sessionCookieHeader(req, sessionToken, THIRTY_DAYS),
+      });
+      return res.end();
+    } catch (e) {
+      console.error('Error en /auth/verify:', e.message);
       res.writeHead(302, { Location: '/cuenta?error=enlace_invalido' });
       return res.end();
     }
-    link.used = true;
-    const clients = loadClients();
-    if (!clients[link.email]) {
-      clients[link.email] = {
-        id: newId(),
-        email: link.email,
-        createdAt: new Date().toISOString(),
-        nucleo: defaultNucleo(),
-      };
-      saveClients(clients);
-    }
-    const sessionToken = crypto.randomBytes(32).toString('hex');
-    const THIRTY_DAYS = 30 * 24 * 60 * 60;
-    auth.loginSessions[sessionToken] = {
-      email: link.email,
-      clientId: clients[link.email].id,
-      createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + THIRTY_DAYS * 1000).toISOString(),
-    };
-    purgeExpiredAuth(auth);
-    saveAuth(auth);
-    res.writeHead(302, {
-      Location: '/cuenta',
-      'Set-Cookie': sessionCookieHeader(req, sessionToken, THIRTY_DAYS),
-    });
-    return res.end();
   }
 
   if (pathname === '/webhooks/proof' && req.method === 'POST') {
@@ -884,8 +825,7 @@ const server = http.createServer(async (req, res) => {
       const payload = JSON.parse(raw);
       const event = payload.event;
       const transactionId = payload.data?.transaction_id;
-      const sessions = loadSessions();
-      const match = Object.values(sessions).find((s) => s.proof?.transactionId === transactionId);
+      const match = await db.getSessionByProofTransactionId(transactionId);
       if (match) {
         match.proof.status = event;
         match.proof.lastEventAt = new Date().toISOString();
@@ -899,7 +839,7 @@ const server = http.createServer(async (req, res) => {
           match.status = 'enviado_a_notario_proof';
         }
         match.history.push({ event: `proof:${event}`, at: new Date().toISOString() });
-        saveSessions(sessions);
+        await db.saveSession(match);
       } else {
         console.warn(`Webhook de Proof.com para transacción sin sesión local: ${transactionId} (${event})`);
       }
@@ -921,8 +861,19 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Documentos/firmas guardados en la base de datos (antes: archivos sueltos
+  // en disco bajo data/uploads/ — ver nota de persistencia arriba).
   if (pathname.startsWith('/uploads/')) {
-    return serveStatic(req, res, path.join(DATA_DIR, pathname.replace('/uploads/', 'uploads/')));
+    const fileId = decodeURIComponent(pathname.replace('/uploads/', ''));
+    try {
+      const file = await db.getFile(fileId);
+      if (!file) return send(res, 404, { error: 'No encontrado' });
+      res.writeHead(200, { 'Content-Type': file.contentType || guessContentType(fileId) });
+      return res.end(file.data);
+    } catch (e) {
+      console.error('Error sirviendo /uploads/:', e.message);
+      return send(res, 500, { error: 'Error interno' });
+    }
   }
 
   // Rutas de páginas (SPA con rutas "bonitas")
@@ -945,8 +896,16 @@ const server = http.createServer(async (req, res) => {
   return send(res, 404, { error: 'Página no encontrada' });
 });
 
-server.listen(PORT, () => {
-  console.log(`Firmaza corriendo en http://localhost:${PORT}`);
-  console.log(process.env.SQUARE_ACCESS_TOKEN ? 'Square: modo real' : 'Square: modo demo (sin SQUARE_ACCESS_TOKEN)');
-  console.log(process.env.RESEND_API_KEY ? 'Correo (enlaces mágicos): modo real' : 'Correo (enlaces mágicos): modo demo (sin RESEND_API_KEY, el enlace se imprime aquí en la consola)');
-});
+db.migrate()
+  .then(() => {
+    console.log('Base de datos: tablas listas (Postgres)');
+    server.listen(PORT, () => {
+      console.log(`Firmaza corriendo en http://localhost:${PORT}`);
+      console.log(process.env.SQUARE_ACCESS_TOKEN ? 'Square: modo real' : 'Square: modo demo (sin SQUARE_ACCESS_TOKEN)');
+      console.log(process.env.RESEND_API_KEY ? 'Correo (enlaces mágicos): modo real' : 'Correo (enlaces mágicos): modo demo (sin RESEND_API_KEY, el enlace se imprime aquí en la consola)');
+    });
+  })
+  .catch((e) => {
+    console.error('No se pudo preparar la base de datos (revisa DATABASE_URL):', e.message);
+    process.exit(1);
+  });
