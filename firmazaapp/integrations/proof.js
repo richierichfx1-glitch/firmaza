@@ -60,9 +60,18 @@ async function proofFetch(url, { apiKey, method = 'GET', body } = {}) {
           body: body ? JSON.stringify(body) : undefined,
     });
     let json = null;
-    try { json = await resp.json(); } catch { /* respuesta vacía o no-JSON */ }
+    let rawText = null;
+    try {
+          rawText = await resp.text();
+          json = rawText ? JSON.parse(rawText) : null;
+    } catch { /* respuesta vacía o no-JSON: nos quedamos con rawText tal cual */ }
     if (!resp.ok) {
-          const detail = json?.message || json?.error || json?.errors?.[0]?.message || `HTTP ${resp.status}`;
+          // Antes esto colapsaba cualquier error sin uno de esos tres campos
+          // exactos a un simple "HTTP 422", sin decir por qué Proof.com
+          // rechazó la solicitud — deja el cuerpo completo (o el texto crudo,
+          // si no era JSON válido) para poder diagnosticar de verdad.
+          const detail = json?.message || json?.error || json?.errors?.[0]?.message
+            || (json ? JSON.stringify(json) : null) || rawText || `HTTP ${resp.status}`;
           throw new Error(`Proof.com: ${detail}`);
     }
     return json;
