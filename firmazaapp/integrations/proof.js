@@ -129,6 +129,13 @@ async function getTransactionStatus(transactionId) {
     return proofFetch(`${PROOF_BASE_URL}/transactions/${transactionId}`, { apiKey });
 }
 
+/** Lista las suscripciones de webhooks v2 ya configuradas en la cuenta. */
+async function listWebhooks() {
+    const apiKey = process.env.PROOF_API_KEY;
+    if (!apiKey) return null;
+    return proofFetch(`${PROOF_BASE_URL_V2}/webhooks`, { apiKey });
+}
+
 /**
  * Registra (o reemplaza) la suscripción de webhooks v2 apuntando a
  * `webhookUrl` (debe ser pública, ej. https://firmaza.com/webhooks/proof).
@@ -177,4 +184,4 @@ function verifyWebhookSignature(rawBody, signatureHeader) {
     }
 }
 
-module.exports = { createRonSession, getTransactionStatus, registerWebhook, verifyWebhookSignature };
+module.exports = { createRonSession, getTransactionStatus, registerWebhook, listWebhooks, verifyWebhookSignature };

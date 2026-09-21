@@ -35,6 +35,7 @@
  *   GET  /api/rtc/:room/signal      -> long-poll de señales pendientes
  *   POST /webhooks/proof            -> recibe eventos de Proof.com (transacción actualizada)
  *   POST /admin/register-proof-webhook -> registra la suscripción de webhooks v2 en Proof.com (una vez, protegido con ADMIN_SECRET)
+ *   GET  /admin/list-proof-webhooks    -> lista las suscripciones de webhooks ya registradas en Proof.com (protegido con ADMIN_SECRET)
  *   GET  /uploads/:id               -> sirve un archivo guardado en la base de datos (documento/firma)
  *
  *   -- Acceso del panel de notario (/notario) --
@@ -997,6 +998,25 @@ const server = http.createServer(async (req, res) => {
     try {
       const origin = `${req.headers['x-forwarded-proto'] || 'https'}://${req.headers.host}`;
       const result = await proofRon.registerWebhook(`${origin}/webhooks/proof`);
+      if (!result) return send(res, 400, { error: 'PROOF_API_KEY no está configurada en el servidor' });
+      return send(res, 200, { ok: true, result });
+    } catch (e) {
+      return send(res, 500, { error: e.message });
+    }
+  }
+
+  // Solo lectura — para confirmar qué webhooks quedaron registrados de verdad
+  // en la cuenta de Proof.com (útil porque /admin/register-proof-webhook
+  // devuelve error si ya existe una suscripción para esa URL, sin decir a
+  // qué eventos está suscrita esa suscripción existente).
+  if (pathname === '/admin/list-proof-webhooks' && req.method === 'GET') {
+    const adminSecret = process.env.ADMIN_SECRET;
+    const provided = req.headers['x-admin-secret'];
+    if (!adminSecret || !provided || provided !== adminSecret) {
+      return send(res, 401, { error: 'No autorizado' });
+    }
+    try {
+      const result = await proofRon.listWebhooks();
       if (!result) return send(res, 400, { error: 'PROOF_API_KEY no está configurada en el servidor' });
       return send(res, 200, { ok: true, result });
     } catch (e) {
