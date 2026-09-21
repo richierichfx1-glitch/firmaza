@@ -14,6 +14,11 @@
  * subidos/generados) vive en Postgres, que sí sobrevive deploys y reinicios.
  * Ver lib/db.js para el detalle de las tablas y consultas.
  *
+ * PUBLIC_ORIGIN (recomendado: "https://firmaza.com"): de dónde salen las
+ * URLs que este servidor genera y le manda a terceros (Square, Proof.com,
+ * el enlace mágico por correo) — sin esta variable se usa el header Host de
+ * la petición entrante, que cualquiera puede falsificar. Ver trustedOrigin().
+ *
  * Rutas principales:
  *   GET  /                          -> landing page
  *   GET  /app                       -> flujo de notarización (SPA)
@@ -119,6 +124,71 @@ function parseCookies(req) {
 function isHttps(req) {
   return (req.headers['x-forwarded-proto'] || '').toLowerCase() === 'https';
 }
+// El header Host (y x-forwarded-proto) los manda el cliente y no son de
+// fiar para construir URLs que luego se usan para cosas sensibles: el
+// enlace mágico de acceso, el redirectUrl que ve Square, la URL pública del
+// documento que se le manda a Proof.com, o a dónde apunta el webhook que se
+// registra en la cuenta de Proof.com. Si alguien manda un Host falsificado
+// (p. ej. "evil.com"), esas URLs podrían apuntar a un dominio que no es
+// firmaza.com. Con PUBLIC_ORIGIN configurado (recomendado:
+// "https://firmaza.com") se usa siempre ese valor fijo; solo si no está
+// configurada se cae de vuelta al header Host, igual que antes.
+function trustedOrigin(req) {
+  const configured = (process.env.PUBLIC_ORIGIN || '').trim().replace(/\/$/, '');
+  if (configured) return configured;
+  return `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers.host}`;
+}
+// Comparación de secretos en tiempo constante — evita filtrar por timing
+// cuántos caracteres iniciales coinciden (como sí hace `!==` con strings).
+function timingSafeStringEqual(a, b) {
+  const bufA = Buffer.from(String(a || ''));
+  const bufB = Buffer.from(String(b || ''));
+  if (bufA.length !== bufB.length) return false;
+  try {
+    return crypto.timingSafeEqual(bufA, bufB);
+  } catch {
+    return false;
+  }
+}
+// Límite simple de intentos por IP para el login de notario — sin esto,
+// cualquiera podía probar códigos de NOTARY_ACCESS_CODE sin freno alguno
+// (es un solo código compartido, así que fuerza bruta es más viable que con
+// una contraseña individual). En memoria: se reinicia si el proceso
+// reinicia, suficiente para frenar automatización básica.
+const notaryLoginAttempts = new Map();
+function isNotaryLoginRateLimited(req) {
+  const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'desconocido';
+  const now = Date.now();
+  const windowMs = 10 * 60 * 1000; // 10 minutos
+  const entry = notaryLoginAttempts.get(ip);
+  if (!entry || now - entry.windowStart > windowMs) {
+    notaryLoginAttempts.set(ip, { windowStart: now, count: 1 });
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > 20;
+}
+// Limpieza periódica para no acumular entradas indefinidamente.
+setInterval(() => {
+  const now = Date.now();
+  const windowMs = 10 * 60 * 1000;
+  for (const [ip, entry] of notaryLoginAttempts.entries()) {
+    if (now - entry.windowStart > windowMs) notaryLoginAttempts.delete(ip);
+  }
+}, 5 * 60 * 1000).unref();
+
+// Catálogo de precios del lado del servidor — el monto y la descripción del
+// cargo en Square NUNCA deben venir del cliente (antes /checkout confiaba
+// ciegamente en body.amount/body.description: cualquiera podía mandar
+// amount:0.01 y "pagar" un centavo por una notarización). El único producto
+// que hoy realmente se cobra desde el flujo de /app es el primer sello
+// notarial ($25, ver public/index.html #precios); se deja como catálogo
+// (en vez de una sola constante) para poder agregar sellos/testigos
+// adicionales el día que el checkout los soporte, sin reabrir este hueco.
+const PRICE_CATALOG = {
+  primer_sello: { amountCents: 2500, description: 'Primer sello notarial — Firmaza' },
+};
+const DEFAULT_PRICE_ITEM = 'primer_sello';
 const SESSION_COOKIE = 'firmaza_session';
 function sessionCookieHeader(req, token, maxAgeSeconds) {
   const parts = [
@@ -275,6 +345,7 @@ async function sendMagicLinkEmail(email, link) {
   const from = process.env.EMAIL_FROM || 'Firmaza <onboarding@resend.dev>';
   const resp = await fetch('https://api.resend.com/emails', {
     method: 'POST',
+    signal: AbortSignal.timeout(15000),
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       from,
@@ -294,7 +365,25 @@ async function sendMagicLinkEmail(email, link) {
 // Señalización WebRTC en memoria: { roomId: [ {from, type, payload, ts}, ... ] }
 // (No necesita persistencia real — son mensajes efímeros de una llamada en
 // curso, no datos que deban sobrevivir un reinicio del servidor.)
-const rtcRooms = {};
+// Object.create(null) en vez de {} para que una room llamada "constructor"
+// o "__proto__" (el nombre viene del regex de la ruta, cualquiera lo elige)
+// no choque con el prototipo de Object.
+const rtcRooms = Object.create(null);
+const RTC_ROOM_TTL_MS = 30 * 60 * 1000; // 30 minutos sin actividad -> se limpia
+const RTC_MAX_ROOMS = 500; // tope simple contra quien cree miles de rooms vacías
+// Antes una room, una vez creada, nunca se borraba y su arreglo de mensajes
+// crecía sin límite hasta 200 (el .shift() de más abajo) pero el número de
+// ROOMS en sí no tenía tope — cualquiera podía golpear /api/rtc/:room/signal
+// con miles de nombres de room distintos y quedarse ahí para siempre en
+// memoria. Esto limpia rooms inactivas y pone un tope duro al total.
+setInterval(() => {
+  const now = Date.now();
+  for (const room of Object.keys(rtcRooms)) {
+    const msgs = rtcRooms[room];
+    const lastTs = msgs.length ? msgs[msgs.length - 1].ts : 0;
+    if (now - lastTs > RTC_ROOM_TTL_MS) delete rtcRooms[room];
+  }
+}, 5 * 60 * 1000).unref();
 
 function send(res, status, body, headers = {}) {
   const isJSON = typeof body === 'object';
@@ -345,6 +434,31 @@ function readBody(req) {
   });
 }
 
+// Una vez que una sesión ya se pagó (o ya se mandó a notarizar), el
+// documento que se va a notarizar no debe poder cambiarse por debajo —
+// antes /upload y /prepare-document no revisaban el estado de la sesión en
+// absoluto, así que alguien podía pagar por notarizar un documento y luego,
+// antes de que el notario lo revisara, reemplazarlo por otro distinto.
+function documentLocked(s) {
+  return Boolean(s.payment?.paidAt || s.proof?.transactionId || s.status === 'notarizacion_completada');
+}
+
+// Tope de longitud por campo para lo que termina convertido en PDF — el
+// límite global de 25MB por request (ver readBody) no evita que un solo
+// campo de texto (p. ej. el cuerpo de una carta personalizada) traiga
+// varios megabytes de texto, lo que puede hacer que renderPdf() tarde
+// mucho o genere un PDF enorme. 20,000 caracteres es generoso para
+// cualquier carta o campo real de una plantilla.
+const MAX_FIELD_LENGTH = 20000;
+function fieldsWithinLimit(values) {
+  for (const [key, value] of Object.entries(values || {})) {
+    if (typeof value === 'string' && value.length > MAX_FIELD_LENGTH) {
+      return `El campo "${key}" es demasiado largo (máximo ${MAX_FIELD_LENGTH} caracteres).`;
+    }
+  }
+  return null;
+}
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -384,6 +498,7 @@ async function createSquarePaymentLink({ amountCents, description, redirectUrl }
   const env = process.env.SQUARE_ENV === 'production' ? 'connect.squareup.com' : 'connect.squareupsandbox.com';
   const resp = await fetch(`https://${env}/v2/online-checkout/payment-links`, {
     method: 'POST',
+    signal: AbortSignal.timeout(15000),
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
@@ -416,6 +531,7 @@ async function verifySquareOrderPaid(orderId, expectedAmountCents) {
   if (!token || !orderId) return { paid: false, reason: 'sin_order_id' };
   const env = process.env.SQUARE_ENV === 'production' ? 'connect.squareup.com' : 'connect.squareupsandbox.com';
   const resp = await fetch(`https://${env}/v2/orders/${orderId}`, {
+    signal: AbortSignal.timeout(15000),
     headers: { Authorization: `Bearer ${token}`, 'Square-Version': '2024-08-21' },
   });
   const json = await resp.json();
@@ -474,7 +590,7 @@ async function handleApi(req, res, pathname, query) {
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
     await db.createMagicLink(token, email, expiresAt);
-    const origin = `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers.host}`;
+    const origin = trustedOrigin(req);
     const link = `${origin}/auth/verify?token=${token}`;
     try {
       const result = await sendMagicLinkEmail(email, link);
@@ -503,9 +619,12 @@ async function handleApi(req, res, pathname, query) {
 
   // --- Acceso del panel de notario (ver nota junto a isNotaryAuthenticated) ---
   if (pathname === '/api/notary/login' && req.method === 'POST') {
+    if (isNotaryLoginRateLimited(req)) {
+      return send(res, 429, { error: 'Demasiados intentos. Espera unos minutos e inténtalo de nuevo.' });
+    }
     const body = await readBody(req);
     const secret = process.env.NOTARY_ACCESS_CODE;
-    if (!secret || !body.code || String(body.code) !== secret) {
+    if (!secret || !body.code || !timingSafeStringEqual(String(body.code), secret)) {
       return send(res, 401, { error: 'Código incorrecto' });
     }
     const expiresAt = Date.now() + NOTARY_SESSION_MS;
@@ -618,6 +737,9 @@ async function handleApi(req, res, pathname, query) {
     }
 
     if (sub === '/upload' && req.method === 'POST') {
+      if (documentLocked(s)) {
+        return send(res, 409, { error: 'Esta sesión ya está pagada/notarizada — no se puede reemplazar el documento.' });
+      }
       const body = await readBody(req);
       if (!body.filename || !body.base64) return send(res, 400, { error: 'Falta filename o base64' });
       const dataUriMatch = /^data:([^;]+);base64,/.exec(body.base64);
@@ -643,6 +765,9 @@ async function handleApi(req, res, pathname, query) {
     // IMPORTANTE: Firmaza NUNCA decide el contenido legal aquí, solo lo
     // acomoda en formato de documento — ver aviso en lib/documentTemplates.js.
     if (sub === '/prepare-document' && req.method === 'POST') {
+      if (documentLocked(s)) {
+        return send(res, 409, { error: 'Esta sesión ya está pagada/notarizada — no se puede reemplazar el documento.' });
+      }
       const body = await readBody(req);
       let blocks, docTitle, templateId = null, inputs = null;
       try {
@@ -650,6 +775,8 @@ async function handleApi(req, res, pathname, query) {
           const template = docTemplates.getTemplate(body.templateId);
           if (!template) return send(res, 400, { error: 'Plantilla no encontrada' });
           const values = body.values || {};
+          const lengthError = fieldsWithinLimit(values);
+          if (lengthError) return send(res, 400, { error: lengthError });
           const missing = docTemplates.validateValues(template, values);
           if (missing.length) {
             return send(res, 400, {
@@ -668,6 +795,8 @@ async function handleApi(req, res, pathname, query) {
         } else if (body.mode === 'custom') {
           const cuerpo = String(body.cuerpo || '').trim();
           if (!cuerpo) return send(res, 400, { error: 'Escribe el texto de tu carta' });
+          const lengthError = fieldsWithinLimit({ titulo: body.titulo, cuerpo, lugar: body.lugar });
+          if (lengthError) return send(res, 400, { error: lengthError });
           blocks = docTemplates.renderCustomLetter({
             titulo: body.titulo,
             cuerpo,
@@ -719,13 +848,26 @@ async function handleApi(req, res, pathname, query) {
     }
 
     if (sub === '/checkout' && req.method === 'POST') {
-      const body = await readBody(req);
-      const amountCents = Math.round((body.amount || 25) * 100);
-      const origin = `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers.host}`;
+      // Ya pagada — no crear otro cargo, solo confirmar lo que ya hay.
+      // (Antes esta ruta no revisaba esto: un doble clic o un POST repetido
+      // podía generar más de un payment link/orden para la misma sesión.)
+      if (s.payment?.paidAt) {
+        return send(res, 200, { demo: s.payment.mode === 'demo', session: s });
+      }
+      await readBody(req); // se descarta a propósito — ver nota abajo sobre PRICE_CATALOG
+      // El monto y la descripción del cargo NUNCA deben venir del cliente:
+      // antes se tomaban directo de body.amount/body.description, así que
+      // cualquiera podía mandar {amount: 0.01} y pagar un centavo por una
+      // notarización de $25. El servidor decide el precio a partir de un
+      // catálogo fijo (ver PRICE_CATALOG arriba); hoy solo existe un
+      // producto real en el flujo de /app.
+      const item = PRICE_CATALOG[DEFAULT_PRICE_ITEM];
+      const amountCents = item.amountCents;
+      const origin = trustedOrigin(req);
       try {
         const result = await createSquarePaymentLink({
           amountCents,
-          description: body.description || 'Notarización — Firmaza',
+          description: item.description,
           redirectUrl: `${origin}/app#/pagar-exito/${id}`,
         });
         if (result.demo) {
@@ -735,7 +877,18 @@ async function handleApi(req, res, pathname, query) {
           await db.saveSession(s);
           return send(res, 200, { demo: true, session: s });
         }
-        s.payment = { mode: 'square', paymentLinkId: result.id, orderId: result.orderId, amount: amountCents / 100 };
+        // orderIds acumula TODAS las órdenes creadas para esta sesión (no
+        // solo la más reciente), para que /confirm-payment pueda reconocer
+        // un pago aunque haya sido en una orden anterior a la última creada
+        // — ver nota junto a /confirm-payment.
+        const priorOrderIds = s.payment?.orderIds || [];
+        s.payment = {
+          mode: 'square',
+          paymentLinkId: result.id,
+          orderId: result.orderId,
+          orderIds: [...priorOrderIds, result.orderId].filter(Boolean),
+          amount: amountCents / 100,
+        };
         await db.saveSession(s);
         return send(res, 200, { demo: false, url: result.url });
       } catch (e) {
@@ -765,7 +918,19 @@ async function handleApi(req, res, pathname, query) {
       }
       try {
         const expectedAmountCents = s.payment?.amount != null ? Math.round(s.payment.amount * 100) : null;
-        const verification = await verifySquareOrderPaid(s.payment?.orderId, expectedAmountCents);
+        // Revisa TODAS las órdenes creadas para esta sesión, no solo
+        // s.payment.orderId (la más reciente). Antes, si /checkout se
+        // llamaba dos veces (doble clic, reintento de red) se generaban dos
+        // órdenes de Square distintas y s.payment.orderId quedaba apuntando
+        // solo a la última; si el firmante había pagado la primera, esta
+        // ruta nunca lo encontraba y la sesión quedaba huérfana sin poder
+        // avanzar aunque sí se hubiera cobrado.
+        const orderIdsToCheck = (s.payment?.orderIds?.length ? s.payment.orderIds : [s.payment?.orderId]).filter(Boolean);
+        let verification = { paid: false, state: null };
+        for (const orderId of orderIdsToCheck) {
+          verification = await verifySquareOrderPaid(orderId, expectedAmountCents);
+          if (verification.paid) { s.payment = { ...(s.payment || {}), orderId }; break; }
+        }
         if (!verification.paid) {
           return send(res, 402, {
             error: 'Todavía no detectamos tu pago con Square. Si acabas de pagar, espera unos segundos e inténtalo de nuevo.',
@@ -793,7 +958,7 @@ async function handleApi(req, res, pathname, query) {
       if (!s.payment?.paidAt) {
         return send(res, 402, { error: 'Esta sesión todavía no tiene un pago confirmado.' });
       }
-      const origin = `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers.host}`;
+      const origin = trustedOrigin(req);
       const documentUrl = `${origin}/uploads/${s.document.storedAs}`;
       try {
         const result = await proofRon.createRonSession({
@@ -855,10 +1020,15 @@ async function handleApi(req, res, pathname, query) {
       const hash = crypto.createHash('sha256')
         .update(JSON.stringify({ id, doc: s.document, at: Date.now() }))
         .digest('hex');
+      // Detrás del proxy de Render, req.socket.remoteAddress es la IP
+      // interna del proxy, no la del firmante — para que el rastro de
+      // auditoría de la firma sea útil de verdad hay que leer
+      // x-forwarded-for (la IP real del cliente es la primera de la lista).
+      const signerIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress;
       s.signature = {
         storedAs: safeName,
         signedAt: new Date().toISOString(),
-        ip: req.socket.remoteAddress,
+        ip: signerIp,
         auditHash: hash,
       };
       s.status = 'firmado';
@@ -899,6 +1069,9 @@ async function handleApi(req, res, pathname, query) {
   const rtcMatch = pathname.match(/^\/api\/rtc\/([a-zA-Z0-9-]+)\/signal$/);
   if (rtcMatch) {
     const room = rtcMatch[1];
+    if (!rtcRooms[room] && Object.keys(rtcRooms).length >= RTC_MAX_ROOMS) {
+      return send(res, 503, { error: 'Demasiadas llamadas activas, intenta de nuevo en un momento.' });
+    }
     rtcRooms[room] = rtcRooms[room] || [];
     if (req.method === 'POST') {
       const body = await readBody(req);
@@ -1002,11 +1175,11 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/admin/register-proof-webhook' && req.method === 'POST') {
     const adminSecret = process.env.ADMIN_SECRET;
     const provided = req.headers['x-admin-secret'];
-    if (!adminSecret || !provided || provided !== adminSecret) {
+    if (!adminSecret || !provided || !timingSafeStringEqual(provided, adminSecret)) {
       return send(res, 401, { error: 'No autorizado' });
     }
     try {
-      const origin = `${req.headers['x-forwarded-proto'] || 'https'}://${req.headers.host}`;
+      const origin = trustedOrigin(req);
       const result = await proofRon.registerWebhook(`${origin}/webhooks/proof`);
       if (!result) return send(res, 400, { error: 'PROOF_API_KEY no está configurada en el servidor' });
       return send(res, 200, { ok: true, result });
@@ -1022,7 +1195,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/admin/list-proof-webhooks' && req.method === 'GET') {
     const adminSecret = process.env.ADMIN_SECRET;
     const provided = req.headers['x-admin-secret'];
-    if (!adminSecret || !provided || provided !== adminSecret) {
+    if (!adminSecret || !provided || !timingSafeStringEqual(provided, adminSecret)) {
       return send(res, 401, { error: 'No autorizado' });
     }
     try {

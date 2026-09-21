@@ -5,6 +5,17 @@ let activeSession = null;
 let pc, localStream, roomId, pollTimer, myId, lastSince = 0;
 let queuePollTimer = null;
 
+// El nombre del firmante y el nombre del documento vienen de datos que
+// cualquier persona puede escribir al crear una sesión (no son texto
+// nuestro) — sin escapar, un nombre como `<img src=x onerror=...>` se
+// ejecutaría como HTML/JS dentro del panel del notario. Esto es lo mismo
+// que un ataque de XSS almacenado contra cualquiera que abra /notario.
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+}
+
 async function loadNotaries() {
   const res = await fetch('/api/notaries');
   const data = await res.json();
@@ -29,11 +40,11 @@ async function loadQueue() {
   }
   body.innerHTML = data.queue.map((s) => `
     <tr>
-      <td>${s.signerName || 'Sin nombre'}</td>
-      <td>${s.document?.originalName || '—'}</td>
-      <td>${s.status}</td>
-      <td>${new Date(s.createdAt).toLocaleTimeString('es-MX')}</td>
-      <td><button class="btn btn-primary" data-id="${s.id}">Tomar sesión</button></td>
+      <td>${escapeHtml(s.signerName || 'Sin nombre')}</td>
+      <td>${escapeHtml(s.document?.originalName || '—')}</td>
+      <td>${escapeHtml(s.status)}</td>
+      <td>${escapeHtml(new Date(s.createdAt).toLocaleTimeString('es-MX'))}</td>
+      <td><button class="btn btn-primary" data-id="${escapeHtml(s.id)}">Tomar sesión</button></td>
     </tr>`).join('');
   body.querySelectorAll('button[data-id]').forEach((btn) => {
     btn.addEventListener('click', () => claimSession(btn.dataset.id));
@@ -56,7 +67,18 @@ async function claimSession(id) {
 async function joinCall(room) {
   roomId = room;
   myId = 'notario-' + Math.random().toString(36).slice(2, 8);
-  localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+  // getUserMedia rechaza la promesa si el notario le niega permiso a la
+  // cámara/micrófono, o si no hay dispositivo disponible — sin este
+  // try/catch eso quedaba como una excepción sin manejar y el panel se
+  // quedaba a medias (tarjeta de llamada visible, sin video ni forma clara
+  // de saber qué pasó).
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+  } catch (e) {
+    alert('No se pudo acceder a la cámara/micrófono. Revisa los permisos del navegador e inténtalo de nuevo.');
+    endCall();
+    return;
+  }
   $('#localVideo').srcObject = localStream;
 
   pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
@@ -65,6 +87,32 @@ async function joinCall(room) {
   pc.onicecandidate = (e) => { if (e.candidate) sendSignal({ type: 'ice', payload: e.candidate }); };
 
   pollSignals();
+}
+
+// Libera la cámara/micrófono y cierra la conexión — antes, cerrar sesión
+// (o simplemente terminar la llamada) dejaba el stream de video y el
+// RTCPeerConnection abiertos indefinidamente: la luz de la cámara seguía
+// encendida y el polling de señalización (pollTimer, cada 1.5s) seguía
+// corriendo en segundo plano después de salir del panel de notario.
+function endCall() {
+  clearTimeout(pollTimer);
+  pollTimer = null;
+  if (localStream) {
+    localStream.getTracks().forEach((t) => t.stop());
+    localStream = null;
+  }
+  if (pc) {
+    pc.close();
+    pc = null;
+  }
+  const localVideo = $('#localVideo');
+  const remoteVideo = $('#remoteVideo');
+  if (localVideo) localVideo.srcObject = null;
+  if (remoteVideo) remoteVideo.srcObject = null;
+  const callCard = $('#callCard');
+  if (callCard) callCard.style.display = 'none';
+  activeSession = null;
+  roomId = null;
 }
 
 async function sendSignal(msg) {
@@ -76,6 +124,7 @@ async function sendSignal(msg) {
 
 async function pollSignals() {
   clearTimeout(pollTimer);
+  if (!roomId) return; // la llamada ya terminó (endCall) — no seguir sondeando
   try {
     const res = await fetch(`/api/rtc/${roomId}/signal?since=${lastSince}&from=${myId}`);
     const data = await res.json();
@@ -91,12 +140,13 @@ async function pollSignals() {
       }
     }
   } catch {}
-  pollTimer = setTimeout(pollSignals, 1500);
+  if (roomId) pollTimer = setTimeout(pollSignals, 1500);
 }
 
 function showLogin() {
   clearInterval(queuePollTimer);
   queuePollTimer = null;
+  endCall();
   $('#loginCard').style.display = '';
   $('#queueWrap').style.display = 'none';
   $('#notaryCode').value = '';

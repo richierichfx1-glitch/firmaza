@@ -71,8 +71,20 @@ const UNICODE_TO_WINANSI = {
   '“': String.fromCharCode(147), '”': String.fromCharCode(148), // " "
   '…': '...', // …
 };
+// Cualquier carácter con codepoint > 255 (chino/japonés/coreano, cirílico,
+// árabe, emoji, y algunos signos tipográficos que no están en el mapa de
+// arriba) NO se puede representar con WinAnsiEncoding/Latin-1. Antes, esos
+// caracteres se colaban hasta Buffer.from(str, 'latin1'), que simplemente
+// se queda con el byte bajo del código Unicode — el resultado es un
+// carácter DISTINTO y equivocado en el PDF final (corrupción silenciosa de
+// un documento legal notarizado), sin ningún aviso ni error. Ahora se
+// sustituyen por "?" de forma visible: sigue sin poder mostrar esos
+// caracteres sin una fuente distinta (fuera de alcance de este generador
+// mínimo sin dependencias, ver cabecera del archivo), pero ya no finge
+// mostrar un carácter que no es.
 function sanitizeForWinAnsi(text) {
-  return String(text || '').replace(/[—–‘’“”…]/g, (ch) => UNICODE_TO_WINANSI[ch]);
+  const mapped = String(text || '').replace(/[—–‘’“”…]/g, (ch) => UNICODE_TO_WINANSI[ch]);
+  return mapped.replace(/[^\x00-\xFF]/gu, '?');
 }
 
 function textWidthPt(text, sizePt) {

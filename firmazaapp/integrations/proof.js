@@ -52,6 +52,7 @@ function splitName(fullName) {
 async function proofFetch(url, { apiKey, method = 'GET', body } = {}) {
     const resp = await fetch(url, {
           method,
+          signal: AbortSignal.timeout(15000),
           headers: {
                   ApiKey: apiKey,
                   'Content-Type': 'application/json',

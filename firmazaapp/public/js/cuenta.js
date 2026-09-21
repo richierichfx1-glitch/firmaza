@@ -85,8 +85,16 @@ function renderFamiliares() {
     )
     .join('');
 }
+// Se usa tanto dentro de atributos (value="...") como como contenido de
+// texto (doc-title de abajo) — antes solo escapaba comillas dobles, lo
+// cual bastaba para el caso de atributos pero no para contenido de texto:
+// un título de documento con "<img src=x onerror=...>" se insertaba tal
+// cual vía innerHTML y se ejecutaba como HTML/JS. Escapar los cinco
+// caracteres especiales es seguro en ambos contextos.
 function escapeAttr(v) {
-  return String(v || '').replace(/"/g, '&quot;');
+  return String(v ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
 }
 
 $('#familiaresList').addEventListener('input', (e) => {

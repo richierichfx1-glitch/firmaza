@@ -8,6 +8,18 @@ const $ = (sel) => document.querySelector(sel);
 const panels = document.querySelectorAll('.step-panel');
 const segs = document.querySelectorAll('.progress .seg');
 
+// session.signerName y session.document.originalName son texto que el
+// propio firmante (o quien haya escrito el formulario) controla — al
+// interpolarlos sin escapar en innerHTML, un nombre o nombre de archivo con
+// HTML/JS se ejecutaría en la propia página del firmante (self-XSS, pero
+// self-XSS sigue siendo XSS real si, por ejemplo, alguien comparte una
+// sesión con datos ya manipulados).
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+}
+
 function showStep(n) {
   step = n;
   panels.forEach((p) => (p.style.display = Number(p.dataset.step) === n ? '' : 'none'));
@@ -29,6 +41,16 @@ async function ensureSession() {
   if (resumeId && (await tryResumeSession(resumeId))) return;
 
   const res = await fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+  if (!res.ok) {
+    // Antes, si esta petición fallaba (servidor caído, 500, etc.), el
+    // código seguía como si `data.session` existiera: session quedaba
+    // `undefined` y cualquier acceso posterior a session.id tronaba con un
+    // TypeError sin manejar — la página se quedaba en el spinner de carga
+    // para siempre, sin ningún mensaje. Mejor avisar y dejar reintentar.
+    const pill = $('#sessionPill');
+    if (pill) { pill.textContent = 'No se pudo conectar. Recarga la página.'; pill.classList.remove('live'); }
+    throw new Error('No se pudo crear la sesión');
+  }
   const data = await res.json();
   session = data.session;
   markSessionPillLive();
@@ -447,13 +469,34 @@ $('#toStep2').addEventListener('click', async () => {
 });
 
 // --- Paso 2: pago --------------------------------------------------------------
+// El servidor decide el monto y la descripción del cargo (ver PRICE_CATALOG
+// en server.js) — ya no se mandan desde aquí, un cliente no debe poder
+// decidir cuánto paga.
 $('#toStep3').addEventListener('click', async () => {
-  const data = await api('/checkout', 'POST', { amount: 25, description: 'Primer sello notarial — Firmaza' });
-  if (data.demo) {
-    session = data.session;
-    startNotarization();
-  } else if (data.url) {
-    window.location.href = data.url; // Square Checkout real
+  const btn = $('#toStep3');
+  // Sin esto, un doble clic (o un clic mientras la petición anterior seguía
+  // en vuelo) podía disparar dos llamadas a /checkout casi simultáneas y
+  // crear dos órdenes de pago distintas en Square para la misma sesión —
+  // justo el escenario que /confirm-payment ahora tiene que tolerar, pero
+  // es mejor no provocarlo desde aquí.
+  if (btn.disabled) return;
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = 'Procesando…';
+  try {
+    const data = await api('/checkout', 'POST', {});
+    if (data.demo) {
+      session = data.session;
+      startNotarization();
+    } else if (data.url) {
+      window.location.href = data.url; // Square Checkout real
+      return; // dejamos el botón deshabilitado — estamos navegando fuera de la página
+    }
+  } catch (e) {
+    alert('No se pudo iniciar el pago: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
   }
 });
 
@@ -506,12 +549,13 @@ async function pollProofStatus() {
 function documentLabel() {
   const d = session.document;
   if (!d) return '—';
-  return d.preparedByFirmaza ? `${d.originalName} (preparado con Firmaza)` : d.originalName;
+  const name = escapeHtml(d.originalName);
+  return d.preparedByFirmaza ? `${name} (preparado con Firmaza)` : name;
 }
 
 function renderProofSummary() {
   $('#summaryBox').innerHTML = `
-    <div class="summary-row"><span>Firmante</span><strong>${session.signerName}</strong></div>
+    <div class="summary-row"><span>Firmante</span><strong>${escapeHtml(session.signerName)}</strong></div>
     <div class="summary-row"><span>Documento</span><strong>${documentLabel()}</strong></div>
     <div class="summary-row"><span>Notarización</span><strong>Completada con Proof.com</strong></div>
   `;
@@ -659,10 +703,10 @@ $('#accountCtaBtn').addEventListener('click', async () => {
 
 function renderSummary() {
   $('#summaryBox').innerHTML = `
-    <div class="summary-row"><span>Firmante</span><strong>${session.signerName}</strong></div>
+    <div class="summary-row"><span>Firmante</span><strong>${escapeHtml(session.signerName)}</strong></div>
     <div class="summary-row"><span>Documento</span><strong>${documentLabel()}</strong></div>
-    <div class="summary-row"><span>Firmado el</span><strong>${new Date(session.signature.signedAt).toLocaleString('es-MX')}</strong></div>
-    <div class="summary-row"><span>Folio de auditoría</span><strong style="font-family:monospace">${session.signature.auditHash.slice(0, 16)}…</strong></div>
+    <div class="summary-row"><span>Firmado el</span><strong>${escapeHtml(new Date(session.signature.signedAt).toLocaleString('es-MX'))}</strong></div>
+    <div class="summary-row"><span>Folio de auditoría</span><strong style="font-family:monospace">${escapeHtml(session.signature.auditHash.slice(0, 16))}…</strong></div>
   `;
 }
 
@@ -684,5 +728,7 @@ ensureSession().then(() => {
   // donde debía (resumeAfterPayment/routeToCurrentStatus) — no hay que
   // aplicar una reutilización encima de eso.
   if (!getResumeSessionIdFromHash()) applyReuseIfRequested();
+}).catch((e) => {
+  console.error('No se pudo iniciar la sesión:', e.message);
 });
 showStep(0);
