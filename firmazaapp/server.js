@@ -19,6 +19,7 @@
  *   GET  /app                       -> flujo de notarización (SPA)
  *   GET  /notario                   -> panel para notarios activos (RON)
  *   POST /api/sessions              -> crea una sesión de notarización
+ *   GET  /api/payment-mode           -> si el pago es real (Square configurado) o una simulación, para el aviso en /app
  *   GET  /api/document-templates    -> lista de plantillas que Firmaza puede preparar (ver lib/documentTemplates.js)
  *   POST /api/sessions/:id/prepare-document -> genera un PDF (plantilla o carta dictada por el cliente) y lo deja como el documento de la sesión
  *   POST /api/sessions/:id/upload   -> sube un documento (base64 JSON)
@@ -867,6 +868,15 @@ async function handleApi(req, res, pathname, query) {
     }
 
     return send(res, 404, { error: 'Ruta no encontrada' });
+  }
+
+  // Le dice al frontend si el pago va a ser un cargo real con Square o una
+  // simulación, para que el aviso de la pantalla de pago sea correcto — antes
+  // ese aviso se decidía (por error) mirando el modo de verificación de
+  // identidad, que es una cosa totalmente distinta. No expone el token, solo
+  // si está configurado.
+  if (pathname === '/api/payment-mode' && req.method === 'GET') {
+    return send(res, 200, { demo: !process.env.SQUARE_ACCESS_TOKEN });
   }
 
   // --- Plantillas de documentos (modelo "self-help", ver lib/documentTemplates.js) ---

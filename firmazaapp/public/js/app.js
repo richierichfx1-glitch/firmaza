@@ -397,11 +397,39 @@ async function applyReuseIfRequested() {
 }
 
 // --- Paso 1: identidad --------------------------------------------------------
+// Este paso recoge tus datos básicos de identificación para preparar la
+// sesión (y para que el servidor guarde los últimos 4 dígitos de tu
+// identificación, no el número completo — ver /api/sessions/:id/verify en
+// server.js). NO es la verificación formal: esa ocurre en vivo, por video,
+// cuando te conectas con el notario, quien compara tu identificación con tu
+// rostro y puede hacer preguntas de verificación. Antes este texto decía que
+// la sesión quedaba en "modo de prueba" y no debía usarse para
+// notarizaciones reales — eso confundía a firmantes reales pagando de
+// verdad, porque esa frase se refería solo a este paso interno, no a la
+// notarización completa (que si usa Proof.com de verdad cuando está
+// configurado).
 async function loadIdvMode() {
-  // Solo informativo: el backend decide si hay proveedor real configurado.
   $('#idvNote').textContent =
-    'Modo de verificación: se determinará al enviar tus datos. Sin un proveedor de verificación (Persona, Stripe Identity, etc.) configurado, la sesión queda marcada como "modo de prueba" y no debe usarse para notarizaciones reales.';
+    'La verificación formal de tu identidad ocurre en video, en vivo, con el notario que te atienda: comparará tu identificación con tu rostro y puede hacerte preguntas de verificación. Este paso solo prepara esa sesión.';
 }
+
+// Informa si el pago va a ser un cargo real con Square o una simulación —
+// independiente del modo de verificación de identidad (son dos cosas
+// distintas; antes este mensaje se decidía mirando el modo de identidad por
+// error, así que un firmante pagando de verdad con Square podía ver "no se
+// realizará ningún cargo real" justo antes de que sí se le cobrara).
+let paymentMode = null;
+async function loadPaymentMode() {
+  try {
+    const res = await fetch('/api/payment-mode');
+    paymentMode = await res.json();
+  } catch {
+    // Si no pudimos confirmar el modo, no arriesgamos decir "no hay cargo
+    // real" por error — asumimos que sí podría haberlo.
+    paymentMode = { demo: false };
+  }
+}
+const paymentModeReady = loadPaymentMode();
 
 $('#toStep2').addEventListener('click', async () => {
   const fullName = session.signerName;
@@ -411,7 +439,8 @@ $('#toStep2').addEventListener('click', async () => {
   if (!idNumber || !dob) return alert('Completa tus datos de identificación.');
   const { session: updated } = await api('/verify', 'POST', { fullName, idType, idNumber, dob });
   session = updated;
-  $('#paymentNote').textContent = session.identity.result.mode === 'demo'
+  await paymentModeReady;
+  $('#paymentNote').textContent = paymentMode?.demo
     ? 'Pago en modo de prueba (no se realizará ningún cargo real).'
     : 'Pago procesado de forma segura con Square.';
   showStep(2);
