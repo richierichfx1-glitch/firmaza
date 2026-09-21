@@ -350,7 +350,32 @@ async function createSquarePaymentLink({ amountCents, description, redirectUrl }
   });
   const json = await resp.json();
   if (!resp.ok) throw new Error(json.errors?.[0]?.detail || 'Error de Square');
-  return { demo: false, url: json.payment_link.url, id: json.payment_link.id };
+  return { demo: false, url: json.payment_link.url, id: json.payment_link.id, orderId: json.payment_link.order_id };
+}
+
+// Verifica contra la propia API de Square (Orders API) que una orden
+// realmente se pagó, en vez de confiar en que el navegador del firmante
+// volvió a /pagar-exito/:id — ese regreso lo puede simular cualquiera con
+// una petición POST directa a /confirm-payment, sin haber pagado nada. Un
+// pedido queda en state "COMPLETED" solo cuando Square registró el pago
+// completo; "OPEN" significa que todavía no se ha pagado.
+// Docs: https://developer.squareup.com/reference/square/orders-api/retrieve-order
+async function verifySquareOrderPaid(orderId, expectedAmountCents) {
+  const token = process.env.SQUARE_ACCESS_TOKEN;
+  if (!token || !orderId) return { paid: false, reason: 'sin_order_id' };
+  const env = process.env.SQUARE_ENV === 'production' ? 'connect.squareup.com' : 'connect.squareupsandbox.com';
+  const resp = await fetch(`https://${env}/v2/orders/${orderId}`, {
+    headers: { Authorization: `Bearer ${token}`, 'Square-Version': '2024-08-21' },
+  });
+  const json = await resp.json();
+  if (!resp.ok) throw new Error(json.errors?.[0]?.detail || 'Error consultando la orden en Square');
+  const order = json.order;
+  const paid = order?.state === 'COMPLETED';
+  // Chequeo adicional de monto: la orden la creamos nosotros con un monto
+  // fijo, así que esto es más una red de seguridad que una necesidad, pero
+  // evita confiar ciegamente si algún día el monto se vuelve variable.
+  const amountOk = !expectedAmountCents || order?.total_money?.amount === expectedAmountCents;
+  return { paid: paid && amountOk, state: order?.state, order };
 }
 
 // ---------------------------------------------------------------------------
@@ -637,7 +662,7 @@ async function handleApi(req, res, pathname, query) {
           await db.saveSession(s);
           return send(res, 200, { demo: true, session: s });
         }
-        s.payment = { mode: 'square', paymentLinkId: result.id, amount: amountCents / 100 };
+        s.payment = { mode: 'square', paymentLinkId: result.id, orderId: result.orderId, amount: amountCents / 100 };
         await db.saveSession(s);
         return send(res, 200, { demo: false, url: result.url });
       } catch (e) {
@@ -645,26 +670,56 @@ async function handleApi(req, res, pathname, query) {
       }
     }
 
-    // Square redirige aquí (`redirectUrl` de arriba) solo cuando el pago se
-    // completó, así que el frontend llama esta ruta apenas detecta el
-    // regreso (#/pagar-exito/:id) para dejar la sesión marcada como pagada
-    // y poder seguir directo a /notarize. NOTA: esto confía en el redirect
-    // de Square; para producción con más volumen conviene además validar
-    // el pago con el webhook de Square (Payments API) antes de confiar en
-    // este solo paso — por ahora es suficiente para el prototipo.
+    // Square redirige aquí (`redirectUrl` de arriba) cuando el firmante
+    // termina el checkout, así que el frontend llama esta ruta apenas
+    // detecta el regreso (#/pagar-exito/:id) para dejar la sesión marcada
+    // como pagada y poder seguir directo a /notarize.
+    //
+    // Ese regreso del navegador NO es prueba de pago por sí solo — cualquiera
+    // puede mandar un POST directo a esta ruta sin haber pagado nada. Por
+    // eso, antes de marcar la sesión como pagada, se confirma con la propia
+    // API de Square (Orders API) que la orden asociada de verdad quedó en
+    // estado COMPLETED. Ver verifySquareOrderPaid() arriba.
     if (sub === '/confirm-payment' && req.method === 'POST') {
-      if (s.payment?.mode !== 'demo') {
+      if (s.payment?.mode === 'demo') {
+        return send(res, 200, { session: s });
+      }
+      if (s.payment?.paidAt) {
+        // Ya se había verificado en una llamada anterior (p. ej. el
+        // firmante recargó la página de éxito) — no hace falta repetir la
+        // consulta a Square.
+        return send(res, 200, { session: s });
+      }
+      try {
+        const expectedAmountCents = s.payment?.amount != null ? Math.round(s.payment.amount * 100) : null;
+        const verification = await verifySquareOrderPaid(s.payment?.orderId, expectedAmountCents);
+        if (!verification.paid) {
+          return send(res, 402, {
+            error: 'Todavía no detectamos tu pago con Square. Si acabas de pagar, espera unos segundos e inténtalo de nuevo.',
+            state: verification.state || null,
+            session: s,
+          });
+        }
         s.payment = { ...(s.payment || {}), mode: 'square', paidAt: new Date().toISOString() };
         s.status = 'pagado_square';
         s.history.push({ event: 'pago_square_confirmado', at: new Date().toISOString() });
         await db.saveSession(s);
+        return send(res, 200, { session: s });
+      } catch (e) {
+        return send(res, 500, { error: e.message });
       }
-      return send(res, 200, { session: s });
     }
 
     if (sub === '/notarize' && req.method === 'POST') {
       if (!s.document) return send(res, 400, { error: 'Primero hay que subir el documento' });
       if (!s.email) return send(res, 400, { error: 'La sesión no tiene correo del firmante' });
+      // Sin esto, cualquiera con el id de una sesión (o creando una propia)
+      // podía llamar /notarize directo sin pasar por /checkout ni
+      // /confirm-payment, y eso crea una transacción real y de pago en
+      // Proof.com — es decir, notarizaciones gratis a costa de Firmaza.
+      if (!s.payment?.paidAt) {
+        return send(res, 402, { error: 'Esta sesión todavía no tiene un pago confirmado.' });
+      }
       const origin = `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers.host}`;
       const documentUrl = `${origin}/uploads/${s.document.storedAs}`;
       try {

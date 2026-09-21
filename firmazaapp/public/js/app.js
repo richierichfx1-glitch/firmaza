@@ -80,10 +80,26 @@ async function tryResumeSession(id) {
 // transacción duplicada si el firmante recarga la página de éxito).
 async function resumeAfterPayment() {
   if (session.status !== 'pagado_demo' && session.payment?.mode !== 'demo') {
-    try {
-      const { session: updated } = await api('/confirm-payment', 'POST');
-      session = updated;
-    } catch { /* seguimos con lo que ya teníamos guardado */ }
+    // El servidor verifica el pago contra la propia API de Square antes de
+    // marcarlo como pagado (ver /confirm-payment en server.js), así que
+    // justo después del redirect puede tardar un instante en reflejarse.
+    // Reintentamos unas cuantas veces con una pausa corta antes de avisarle
+    // al firmante que algo salió mal.
+    const maxAttempts = 4;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const { session: updated } = await api('/confirm-payment', 'POST');
+        session = updated;
+        break;
+      } catch (e) {
+        if (attempt === maxAttempts) {
+          $('#paymentNote').textContent =
+            'Todavía no confirmamos tu pago con Square. Si ya pagaste, espera un momento y recarga esta página; si el problema sigue, contáctanos.';
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
   }
   $('#paymentNote').textContent = 'Pago procesado de forma segura con Square.';
   routeToCurrentStatus();
