@@ -34,7 +34,15 @@
  *   POST /api/rtc/:room/signal      -> señalización WebRTC (oferta/respuesta/ICE)
  *   GET  /api/rtc/:room/signal      -> long-poll de señales pendientes
  *   POST /webhooks/proof            -> recibe eventos de Proof.com (transacción actualizada)
+ *   POST /admin/register-proof-webhook -> registra la suscripción de webhooks v2 en Proof.com (una vez, protegido con ADMIN_SECRET)
  *   GET  /uploads/:id               -> sirve un archivo guardado en la base de datos (documento/firma)
+ *
+ *   -- Acceso del panel de notario (/notario) --
+ *   POST /api/notary/login             -> entra con el código de acceso compartido (NOTARY_ACCESS_CODE)
+ *   POST /api/notary/logout            -> cierra la sesión de notario
+ *   GET  /api/notary/me                -> si hay una sesión de notario activa
+ *   GET  /api/queue                    -> cola de firmantes en espera (requiere sesión de notario)
+ *   POST /api/sessions/:id/claim       -> un notario toma una sesión de la cola (requiere sesión de notario)
  *
  *   -- Cuentas de cliente (perfil, sin contraseña — enlace mágico por correo) --
  *   GET  /cuenta                       -> panel del cliente (login si no hay sesión, perfil si la hay)
@@ -130,6 +138,47 @@ async function getClientFromRequest(req) {
   const ls = await db.getLoginSession(token);
   if (!ls) return null;
   return db.getClientByEmail(ls.email);
+}
+
+// ---------------------------------------------------------------------------
+// Acceso del panel de notario (/notario). Antes de esto, /api/queue y
+// /api/sessions/:id/claim no tenían ningún control de acceso: cualquiera que
+// visitara /notario (o llamara a esas rutas directo) podía ver la cola
+// completa de firmantes en espera (nombre, correo, tipo/últimos 4 dígitos de
+// identificación, nombre del documento) y "tomar" cualquier sesión, sin
+// verificar que fuera realmente un notario autorizado de Firmaza.
+//
+// No hay todavía cuentas individuales de notario (eso sería una cuenta por
+// notario, con su propia contraseña/enlace mágico), así que por ahora se usa
+// un solo código de acceso compartido (NOTARY_ACCESS_CODE) que el equipo le
+// da a cada notario autorizado. Si esa variable de entorno no está
+// configurada, el acceso queda cerrado para todos (fail closed) — es más
+// seguro que dejarlo abierto por accidente en producción.
+const NOTARY_COOKIE = 'firmaza_notary';
+const NOTARY_SESSION_MS = 12 * 60 * 60 * 1000; // 12 horas
+function signNotaryToken(expiresAt) {
+  const secret = process.env.NOTARY_ACCESS_CODE || '';
+  return crypto.createHmac('sha256', secret).update(`notary:${expiresAt}`).digest('hex');
+}
+function notaryCookieHeader(req, token, maxAgeSeconds) {
+  const parts = [`${NOTARY_COOKIE}=${token}`, 'HttpOnly', 'Path=/', `Max-Age=${maxAgeSeconds}`, 'SameSite=Lax'];
+  if (isHttps(req)) parts.push('Secure');
+  return parts.join('; ');
+}
+function isNotaryAuthenticated(req) {
+  const secret = process.env.NOTARY_ACCESS_CODE;
+  if (!secret) return false;
+  const cookies = parseCookies(req);
+  const raw = cookies[NOTARY_COOKIE] || '';
+  const [expiresAtStr, sig] = raw.split('.');
+  const expiresAt = Number(expiresAtStr);
+  if (!expiresAt || Date.now() > expiresAt || !sig) return false;
+  const expected = signNotaryToken(expiresAt);
+  try {
+    return crypto.timingSafeEqual(Buffer.from(sig, 'hex'), Buffer.from(expected, 'hex'));
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -450,6 +499,28 @@ async function handleApi(req, res, pathname, query) {
     return send(res, 200, { ok: true }, { 'Set-Cookie': sessionCookieHeader(req, '', 0) });
   }
 
+  // --- Acceso del panel de notario (ver nota junto a isNotaryAuthenticated) ---
+  if (pathname === '/api/notary/login' && req.method === 'POST') {
+    const body = await readBody(req);
+    const secret = process.env.NOTARY_ACCESS_CODE;
+    if (!secret || !body.code || String(body.code) !== secret) {
+      return send(res, 401, { error: 'Código incorrecto' });
+    }
+    const expiresAt = Date.now() + NOTARY_SESSION_MS;
+    const sig = signNotaryToken(expiresAt);
+    return send(res, 200, { ok: true }, {
+      'Set-Cookie': notaryCookieHeader(req, `${expiresAt}.${sig}`, NOTARY_SESSION_MS / 1000),
+    });
+  }
+
+  if (pathname === '/api/notary/logout' && req.method === 'POST') {
+    return send(res, 200, { ok: true }, { 'Set-Cookie': notaryCookieHeader(req, '', 0) });
+  }
+
+  if (pathname === '/api/notary/me' && req.method === 'GET') {
+    return send(res, 200, { authenticated: isNotaryAuthenticated(req) });
+  }
+
   if (pathname === '/api/cuenta/nucleo' && req.method === 'GET') {
     const client = await getClientFromRequest(req);
     if (!client) return send(res, 401, { error: 'No autenticado' });
@@ -764,6 +835,7 @@ async function handleApi(req, res, pathname, query) {
     }
 
     if (sub === '/claim' && req.method === 'POST') {
+      if (!isNotaryAuthenticated(req)) return send(res, 401, { error: 'No autenticado como notario' });
       const body = await readBody(req);
       s.notaryId = body.notaryId;
       s.status = 'en_sesion_con_notario';
@@ -807,6 +879,7 @@ async function handleApi(req, res, pathname, query) {
   }
 
   if (pathname === '/api/queue' && req.method === 'GET') {
+    if (!isNotaryAuthenticated(req)) return send(res, 401, { error: 'No autenticado como notario' });
     const pending = await db.getSessionsByStatuses(['pagado_demo', 'identidad_verificada', 'en_cola']);
     return send(res, 200, { queue: pending });
   }
@@ -903,6 +976,31 @@ const server = http.createServer(async (req, res) => {
       if (e.message === 'PAYLOAD_TOO_LARGE') return send(res, 413, { error: 'Payload demasiado grande' });
       console.error('Error procesando webhook de Proof.com:', e.message);
       return send(res, 500, { error: 'Error interno' });
+    }
+  }
+
+  // Registra (una sola vez, como paso de configuración) la suscripción de
+  // webhooks v2 de Proof.com apuntando a /webhooks/proof — sin esto, Proof
+  // nunca avisa a Firmaza cuando una transacción cambia de estado, y el sitio
+  // depende solo de que el propio firmante haga polling de /proof-status.
+  // Protegido con ADMIN_SECRET (no con NOTARY_ACCESS_CODE: esto es
+  // configuración de infraestructura, no algo que un notario deba poder
+  // hacer) para que no cualquiera pueda registrar webhooks arbitrarios en la
+  // cuenta de Proof.com de Firmaza. Sin ADMIN_SECRET configurado, la ruta
+  // queda cerrada (fail closed).
+  if (pathname === '/admin/register-proof-webhook' && req.method === 'POST') {
+    const adminSecret = process.env.ADMIN_SECRET;
+    const provided = req.headers['x-admin-secret'];
+    if (!adminSecret || !provided || provided !== adminSecret) {
+      return send(res, 401, { error: 'No autorizado' });
+    }
+    try {
+      const origin = `${req.headers['x-forwarded-proto'] || 'https'}://${req.headers.host}`;
+      const result = await proofRon.registerWebhook(`${origin}/webhooks/proof`);
+      if (!result) return send(res, 400, { error: 'PROOF_API_KEY no está configurada en el servidor' });
+      return send(res, 200, { ok: true, result });
+    } catch (e) {
+      return send(res, 500, { error: e.message });
     }
   }
 

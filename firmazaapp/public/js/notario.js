@@ -3,6 +3,7 @@ const $ = (s) => document.querySelector(s);
 let notaries = [];
 let activeSession = null;
 let pc, localStream, roomId, pollTimer, myId, lastSince = 0;
+let queuePollTimer = null;
 
 async function loadNotaries() {
   const res = await fetch('/api/notaries');
@@ -15,6 +16,11 @@ async function loadNotaries() {
 
 async function loadQueue() {
   const res = await fetch('/api/queue');
+  if (res.status === 401) {
+    // La sesión de notario expiró o se cerró en otra pestaña — de vuelta al login.
+    showLogin();
+    return;
+  }
   const data = await res.json();
   const body = $('#queueBody');
   if (!data.queue.length) {
@@ -40,6 +46,7 @@ async function claimSession(id) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ notaryId }),
   });
+  if (res.status === 401) { showLogin(); return; }
   const data = await res.json();
   activeSession = data.session;
   $('#callCard').style.display = '';
@@ -87,6 +94,44 @@ async function pollSignals() {
   pollTimer = setTimeout(pollSignals, 1500);
 }
 
-loadNotaries();
-loadQueue();
-setInterval(loadQueue, 4000);
+function showLogin() {
+  clearInterval(queuePollTimer);
+  queuePollTimer = null;
+  $('#loginCard').style.display = '';
+  $('#queueWrap').style.display = 'none';
+  $('#notaryCode').value = '';
+}
+
+function showQueue() {
+  $('#loginCard').style.display = 'none';
+  $('#queueWrap').style.display = '';
+  loadNotaries();
+  loadQueue();
+  if (!queuePollTimer) queuePollTimer = setInterval(loadQueue, 4000);
+}
+
+async function checkAuth() {
+  const res = await fetch('/api/notary/me');
+  const data = await res.json();
+  if (data.authenticated) showQueue();
+  else showLogin();
+}
+
+$('#loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const code = $('#notaryCode').value;
+  $('#loginError').style.display = 'none';
+  const res = await fetch('/api/notary/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+  });
+  if (res.ok) showQueue();
+  else $('#loginError').style.display = '';
+});
+
+$('#logoutBtn').addEventListener('click', async () => {
+  await fetch('/api/notary/logout', { method: 'POST' });
+  showLogin();
+});
+
+checkAuth();

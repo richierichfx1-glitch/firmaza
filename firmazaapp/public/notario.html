@@ -18,25 +18,43 @@
 </header>
 
 <div class="app-shell" style="max-width:960px">
-  <div class="card">
-    <h2>Cola de firmantes esperando</h2>
-    <p class="help">Selecciona tu identidad de notario (demo) y toma la siguiente sesión disponible.</p>
-    <div class="field">
-      <label>Notario</label>
-      <select id="notarySelect"></select>
-    </div>
-    <table class="queue-table">
-      <thead><tr><th>Firmante</th><th>Documento</th><th>Estado</th><th>Creado</th><th></th></tr></thead>
-      <tbody id="queueBody"><tr><td colspan="5">Cargando…</td></tr></tbody>
-    </table>
+  <div class="card" id="loginCard">
+    <h2>Acceso de notario</h2>
+    <p class="help">Este panel muestra datos personales de firmantes en espera — solo para notarios autorizados de Firmaza. Ingresa el código de acceso que te compartió el equipo.</p>
+    <form id="loginForm">
+      <div class="field">
+        <label>Código de acceso</label>
+        <input type="password" id="notaryCode" autocomplete="off" required>
+      </div>
+      <button type="submit" class="btn btn-primary">Entrar</button>
+      <p id="loginError" class="help" style="color:var(--coral,#c0392b);display:none">Código incorrecto.</p>
+    </form>
   </div>
 
-  <br>
-  <div class="card" id="callCard" style="display:none">
-    <h2>Sesión en vivo</h2>
-    <div class="video-wrap">
-      <div><video id="localVideo" autoplay muted playsinline></video><div class="center" style="font-size:12px;color:var(--gray);margin-top:4px">Tú (notario)</div></div>
-      <div><video id="remoteVideo" autoplay playsinline></video><div class="center" style="font-size:12px;color:var(--gray);margin-top:4px">Firmante</div></div>
+  <div id="queueWrap" style="display:none">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <h2>Cola de firmantes esperando</h2>
+        <button id="logoutBtn" class="btn btn-ghost" type="button">Salir</button>
+      </div>
+      <p class="help">Selecciona tu identidad de notario (demo) y toma la siguiente sesión disponible.</p>
+      <div class="field">
+        <label>Notario</label>
+        <select id="notarySelect"></select>
+      </div>
+      <table class="queue-table">
+        <thead><tr><th>Firmante</th><th>Documento</th><th>Estado</th><th>Creado</th><th></th></tr></thead>
+        <tbody id="queueBody"><tr><td colspan="5">Cargando…</td></tr></tbody>
+      </table>
+    </div>
+
+    <br>
+    <div class="card" id="callCard" style="display:none">
+      <h2>Sesión en vivo</h2>
+      <div class="video-wrap">
+        <div><video id="localVideo" autoplay muted playsinline></video><div class="center" style="font-size:12px;color:var(--gray);margin-top:4px">Tú (notario)</div></div>
+        <div><video id="remoteVideo" autoplay playsinline></video><div class="center" style="font-size:12px;color:var(--gray);margin-top:4px">Firmante</div></div>
+      </div>
     </div>
   </div>
 </div>
