@@ -937,6 +937,8 @@ const server = http.createServer(async (req, res) => {
     '/app': 'app.html',
     '/notario': 'notario.html',
     '/cuenta': 'cuenta.html',
+    '/terminos': 'terminos.html',
+    '/privacidad': 'privacidad.html',
   };
   if (routes[pathname]) {
     return serveStatic(req, res, path.join(PUBLIC_DIR, routes[pathname]));
