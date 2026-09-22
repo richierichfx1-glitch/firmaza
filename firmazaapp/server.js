@@ -76,6 +76,12 @@ const { translateFields } = require('./lib/translate');
 const db = require('./lib/db');
 
 const PORT = process.env.PORT || 8080;
+// Ruta del panel de notario (ver "Rutas de páginas" más abajo).
+const NOTARY_PANEL_PATH = (() => {
+  const raw = String(process.env.NOTARY_PANEL_PATH || '').trim().replace(/\/+$/, '');
+  if (!raw) return '/notario';
+  return raw.startsWith('/') ? raw : `/${raw}`;
+})();
 const DATA_DIR = path.join(__dirname, 'data');
 // notaries.json sigue siendo un archivo estático dentro del repo (config
 // editada a mano por el equipo, no datos generados por usuarios en runtime),
@@ -1338,7 +1344,11 @@ async function handleApi(req, res, pathname, query) {
 
   if (pathname === '/api/queue' && req.method === 'GET') {
     if (!isNotaryAuthenticated(req)) return send(res, 401, { error: 'No autenticado como notario' });
-    const pending = await db.getSessionsByStatuses(['pagado_demo', 'identidad_verificada', 'en_cola']);
+    // Solo sesiones YA PAGADAS que no se mandaron a Proof.com. Antes también
+    // aparecían sesiones con identidad verificada pero sin pagar (clientes
+    // que abandonaron antes del pago), exponiendo sus datos en la cola.
+    const pending = (await db.getSessionsByStatuses(['pagado_demo', 'pagado_square', 'en_cola']))
+      .filter((q) => q.payment && q.payment.paidAt && !(q.proof && q.proof.transactionId));
     return send(res, 200, { queue: pending });
   }
 
@@ -1548,11 +1558,23 @@ const server = http.createServer(async (req, res) => {
   const routes = {
     '/': 'index.html',
     '/app': 'app.html',
-    '/notario': 'notario.html',
     '/cuenta': 'cuenta.html',
     '/terminos': 'terminos.html',
     '/privacidad': 'privacidad.html',
   };
+  // Panel de notario: no está enlazado en ningún lado y vive en una ruta
+  // secreta configurable (NOTARY_PANEL_PATH en Render) para que clientes u
+  // otras personas no lleguen a él por casualidad — el repo es público, así
+  // que la ruta NO se escribe aquí. Sin la variable, sigue en /notario.
+  // Además sigue protegido por NOTARY_ACCESS_CODE y no se indexa en Google.
+  if (pathname === NOTARY_PANEL_PATH) {
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    res.setHeader('Cache-Control', 'no-store');
+    return serveStatic(req, res, path.join(PUBLIC_DIR, 'notario.html'));
+  }
+  if (pathname === '/notario.html' || pathname === '/notario' || pathname === '/notario/') {
+    return send(res, 404, { error: 'No encontrado' });
+  }
   if (routes[pathname]) {
     return serveStatic(req, res, path.join(PUBLIC_DIR, routes[pathname]));
   }
