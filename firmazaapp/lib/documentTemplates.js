@@ -36,9 +36,10 @@
  * -----------------------------------------------------------------------------
  * El cliente siempre llena el formulario en español. Cada plantilla se puede
  * renderizar en:
- *   - 'en'  inglés (POR DEFECTO — es lo que normalmente piden en EE.UU.), con
- *           líneas de referencia en español en gris debajo del texto fijo,
- *           para que el firmante entienda lo que firma.
+ *   - 'en'  inglés (POR DEFECTO — es lo que normalmente piden en EE.UU.),
+ *           100% en inglés. El firmante entiende el contenido con la
+ *           versión en español de la vista previa y la traducción de
+ *           regreso que aprueba.
  *   - 'es'  español.
  *   - 'bi'  bilingüe inglés + español, párrafo por párrafo. El permiso de
  *           viaje para menores SIEMPRE sale así (ver ALWAYS_BILINGUAL), porque
@@ -155,16 +156,12 @@ function englishValues(values, tr) {
 
 // Piezas comunes -------------------------------------------------------------
 const GRAY = 0.42;
-const es = (text, extra = {}) => ({ text, size: 9, gray: GRAY, spaceAfter: 12, ...extra }); // línea de referencia en español
 const SIGN_DATE_EN = (lugar) => `Signed in ${lugar}, on the _____ day of _______________, ________.`;
 const SIGN_DATE_ES = (lugar) => `Firmado en ${lugar}, el _____ de _______________ de ________.`;
 
 function disclaimerBlocks(lang) {
   if (lang === 'es') return [{ text: LEGAL_DISCLAIMER, size: 8, spaceBefore: 20 }];
-  return [
-    { text: LEGAL_DISCLAIMER_EN, size: 8, spaceBefore: 20, spaceAfter: 6 },
-    { text: `${LEGAL_DISCLAIMER} ${TRANSLATION_NOTE_ES}`, size: 8, gray: GRAY },
-  ];
+  return [{ text: LEGAL_DISCLAIMER_EN, size: 8, spaceBefore: 20 }];
 }
 
 const TEMPLATES = [
@@ -200,16 +197,13 @@ const TEMPLATES = [
       const e = englishValues(v, tr);
       return [
         { text: 'SPECIAL AUTHORIZATION LETTER', size: 16, bold: true, align: 'center', spaceAfter: 4 },
-        { text: '(Limited, single-purpose authorization — not a general Power of Attorney)', size: 9, align: 'center', spaceAfter: 2 },
-        { text: 'Carta poder simple — autorización específica', size: 9, gray: GRAY, align: 'center', spaceAfter: 22 },
-        { text: `I, ${v.poderdanteNombre}, identified by ${e.poderdanteId}, hereby authorize ${v.apoderadoNombre}${v.apoderadoId ? ` (identified by ${e.apoderadoId})` : ''} to do the following on my behalf:`, spaceAfter: 4 },
-        es(`Yo, ${v.poderdanteNombre}, autorizo a ${v.apoderadoNombre} para lo siguiente en mi nombre:`),
+        { text: '(Limited, single-purpose authorization — not a general Power of Attorney)', size: 9, align: 'center', spaceAfter: 22 },
+        { text: `I, ${v.poderdanteNombre}, identified by ${e.poderdanteId}, hereby authorize ${v.apoderadoNombre}${v.apoderadoId ? ` (identified by ${e.apoderadoId})` : ''} to do the following on my behalf:`, spaceAfter: 12 },
         { text: e.alcance, spaceAfter: 16 },
-        { text: `This authorization is valid from ${formatDate(v.fechaInicio, 'en')}${v.fechaFin ? ` until ${formatDate(v.fechaFin, 'en')}` : ' until I revoke it in writing'}.`, spaceAfter: 4 },
-        es(`Esta autorización es válida a partir del ${formatDate(v.fechaInicio, 'es')}${v.fechaFin ? ` y hasta el ${formatDate(v.fechaFin, 'es')}` : ', hasta que yo la revoque por escrito'}.`, { spaceAfter: 24 }),
+        { text: `This authorization is valid from ${formatDate(v.fechaInicio, 'en')}${v.fechaFin ? ` until ${formatDate(v.fechaFin, 'en')}` : ' until I revoke it in writing'}.`, spaceAfter: 28 },
         { text: SIGN_DATE_EN(v.lugar), spaceAfter: 40 },
         { text: '_______________________________', spaceAfter: 2 },
-        { text: `${v.poderdanteNombre} — Signature of grantor / Firma de quien autoriza`, size: 9, spaceAfter: 40 },
+        { text: `${v.poderdanteNombre} — Signature of grantor`, size: 9, spaceAfter: 40 },
         ...disclaimerBlocks('en'),
       ];
     },
@@ -299,14 +293,12 @@ const TEMPLATES = [
       }
       const e = englishValues(v, tr);
       return [
-        { text: 'AFFIDAVIT', size: 16, bold: true, align: 'center', spaceAfter: 2 },
-        { text: 'Declaración jurada', size: 9, gray: GRAY, align: 'center', spaceAfter: 22 },
-        { text: `I, ${v.declaranteNombre}, identified by ${e.declaranteId}, declare under oath and under penalty of perjury the following:`, spaceAfter: 4 },
-        es(`Yo, ${v.declaranteNombre}, declaro bajo juramento y bajo pena de perjurio lo siguiente:`, { spaceAfter: 14 }),
+        { text: 'AFFIDAVIT', size: 16, bold: true, align: 'center', spaceAfter: 24 },
+        { text: `I, ${v.declaranteNombre}, identified by ${e.declaranteId}, declare under oath and under penalty of perjury the following:`, spaceAfter: 14 },
         { text: e.declaracion, spaceAfter: 28 },
         { text: SIGN_DATE_EN(v.lugar), spaceAfter: 40 },
         { text: '_______________________________', spaceAfter: 2 },
-        { text: `${v.declaranteNombre} — Signature of affiant / Firma del declarante`, size: 9, spaceAfter: 40 },
+        { text: `${v.declaranteNombre} — Signature of affiant`, size: 9, spaceAfter: 40 },
         ...disclaimerBlocks('en'),
       ];
     },
@@ -354,12 +346,11 @@ function renderCustomLetter({ titulo, cuerpo, autor, lugar }, { lang = 'es', tr 
     ];
   }
   return [
-    { text: (tr.titulo || titulo || 'LETTER').toUpperCase(), size: 16, bold: true, align: 'center', spaceAfter: 2 },
-    { text: titulo || 'Carta', size: 9, gray: GRAY, align: 'center', spaceAfter: 22 },
+    { text: (tr.titulo || titulo || 'LETTER').toUpperCase(), size: 16, bold: true, align: 'center', spaceAfter: 24 },
     { text: tr.cuerpo || cuerpo, spaceAfter: 28 },
     { text: SIGN_DATE_EN(lugar || '_______________'), spaceAfter: 40 },
     { text: '_______________________________', spaceAfter: 2 },
-    { text: `${autor || ''} — Signature / Firma`, size: 9, spaceAfter: 40 },
+    { text: `${autor || ''} — Signature`, size: 9, spaceAfter: 40 },
     ...disclaimerBlocks('en'),
   ];
 }
