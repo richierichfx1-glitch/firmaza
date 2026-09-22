@@ -138,6 +138,25 @@ function trustedOrigin(req) {
   if (configured) return configured;
   return `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers.host}`;
 }
+// IP real del cliente detrás del proxy de Render. Render añade la IP real
+// del visitante como el ÚLTIMO salto de X-Forwarded-For (el salto que
+// agrega el propio proxy de Render, en el que sí se puede confiar) — el
+// PRIMER salto es el que manda el cliente en su petición original, y
+// cualquiera puede falsificarlo (curl -H "X-Forwarded-For: 1.2.3.4" ...).
+// El código anterior leía el primer salto tanto para el límite de intentos
+// de login de notario como para el registro de auditoría de la firma: en
+// ambos casos un atacante podía escribir ahí lo que quisiera, lo que
+// permitía saltarse el límite de fuerza bruta (cada intento con una IP
+// falsa distinta cuenta como "nueva") y falsificar la IP que queda
+// registrada como prueba de quién firmó.
+function trustedClientIp(req) {
+  const xff = req.headers['x-forwarded-for'];
+  if (xff) {
+    const hops = String(xff).split(',').map((h) => h.trim()).filter(Boolean);
+    if (hops.length) return hops[hops.length - 1];
+  }
+  return req.socket.remoteAddress || 'desconocido';
+}
 // Comparación de secretos en tiempo constante — evita filtrar por timing
 // cuántos caracteres iniciales coinciden (como sí hace `!==` con strings).
 function timingSafeStringEqual(a, b) {
@@ -157,7 +176,7 @@ function timingSafeStringEqual(a, b) {
 // reinicia, suficiente para frenar automatización básica.
 const notaryLoginAttempts = new Map();
 function isNotaryLoginRateLimited(req) {
-  const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'desconocido';
+  const ip = trustedClientIp(req);
   const now = Date.now();
   const windowMs = 10 * 60 * 1000; // 10 minutos
   const entry = notaryLoginAttempts.get(ip);
@@ -575,6 +594,36 @@ function guessContentType(filename) {
   return MIME[ext] || 'application/octet-stream';
 }
 
+// Tipos permitidos para lo que un firmante SUBE (documento a notarizar,
+// firma PNG) y para lo que /uploads/:id sirve de vuelta. Antes, /upload
+// tomaba el Content-Type directo del prefijo "data:TIPO;base64," que manda
+// el propio cliente, sin validarlo contra nada — cualquiera podía crear una
+// sesión gratis (no requiere autenticación) y subir un "documento" con
+// Content-Type "text/html" (o "image/svg+xml", que también ejecuta
+// <script>). GET /uploads/:id no requiere autenticación (tiene que poder
+// sin ella: Proof.com necesita poder descargar el documento) y devolvía ese
+// Content-Type tal cual — es decir, cualquiera podía alojar HTML/JS
+// arbitrario en el propio dominio firmaza.com y mandarle el enlace a otra
+// persona (phishing "mira tu documento notarizado"): quien lo abriera
+// ejecutaba ese script con el origen real del sitio, con acceso a fetch()
+// autenticado contra /api/auth/me, /api/cuenta/*, /api/queue, etc. (las
+// cookies son HttpOnly, pero eso no bloquea fetch() same-origin). Ahora
+// cualquier tipo fuera de esta lista blanca se guarda/sirve como
+// application/octet-stream (el navegador lo descarga, nunca lo ejecuta).
+const SAFE_UPLOAD_CONTENT_TYPES = new Set([
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/plain',
+]);
+function sanitizeUploadContentType(candidate) {
+  const normalized = String(candidate || '').split(';')[0].trim().toLowerCase();
+  return SAFE_UPLOAD_CONTENT_TYPES.has(normalized) ? normalized : 'application/octet-stream';
+}
+
 async function handleApi(req, res, pathname, query) {
   // --- Cuentas de cliente (enlace mágico, sin contraseña) --------------
   if (pathname === '/api/auth/request-link' && req.method === 'POST') {
@@ -743,7 +792,7 @@ async function handleApi(req, res, pathname, query) {
       const body = await readBody(req);
       if (!body.filename || !body.base64) return send(res, 400, { error: 'Falta filename o base64' });
       const dataUriMatch = /^data:([^;]+);base64,/.exec(body.base64);
-      const contentType = dataUriMatch ? dataUriMatch[1] : guessContentType(body.filename);
+      const contentType = sanitizeUploadContentType(dataUriMatch ? dataUriMatch[1] : guessContentType(body.filename));
       const base64Data = body.base64.replace(/^data:.*;base64,/, '');
       const safeName = `${id}-${Date.now()}-${body.filename.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
       await db.saveFile(safeName, Buffer.from(base64Data, 'base64'), contentType);
@@ -928,7 +977,18 @@ async function handleApi(req, res, pathname, query) {
         const orderIdsToCheck = (s.payment?.orderIds?.length ? s.payment.orderIds : [s.payment?.orderId]).filter(Boolean);
         let verification = { paid: false, state: null };
         for (const orderId of orderIdsToCheck) {
-          verification = await verifySquareOrderPaid(orderId, expectedAmountCents);
+          // Cada orden se revisa en su propio try/catch: antes, si
+          // verifySquareOrderPaid() lanzaba una excepción para UNA orden
+          // (p. ej. una orden vieja o inválida que Square ya no reconoce),
+          // el bucle completo abortaba con un 500 y ni siquiera se llegaba
+          // a revisar las demás órdenes de la sesión — pudiendo dejar sin
+          // detectar un pago real que sí estaba en una orden posterior.
+          try {
+            verification = await verifySquareOrderPaid(orderId, expectedAmountCents);
+          } catch (perOrderErr) {
+            console.error(`Error verificando la orden de Square ${orderId}:`, perOrderErr.message);
+            continue;
+          }
           if (verification.paid) { s.payment = { ...(s.payment || {}), orderId }; break; }
         }
         if (!verification.paid) {
@@ -1013,6 +1073,20 @@ async function handleApi(req, res, pathname, query) {
     }
 
     if (sub === '/sign' && req.method === 'POST') {
+      // Antes esta ruta no tenía NINGÚN candado de estado: se podía llamar
+      // en cualquier momento (sin haber pagado, sin haber sido notarizada)
+      // y, peor, se podía volver a llamar después de ya firmada,
+      // reemplazando la firma/PNG y el auditHash ya registrados — es decir,
+      // cualquiera con el id de la sesión (ver nota sobre IDOR en
+      // documentLocked) podía alterar el registro legal de la firma en
+      // cualquier momento, no solo leerlo. Ahora exige pago confirmado
+      // (igual que /notarize) y rechaza (409) si la sesión ya tiene firma.
+      if (!s.payment?.paidAt) {
+        return send(res, 402, { error: 'Esta sesión todavía no tiene un pago confirmado.' });
+      }
+      if (s.signature) {
+        return send(res, 409, { error: 'Esta sesión ya tiene una firma registrada — no se puede reemplazar.' });
+      }
       const body = await readBody(req);
       if (!body.signaturePng) return send(res, 400, { error: 'Falta signaturePng' });
       const safeName = `${id}-firma-${Date.now()}.png`;
@@ -1022,9 +1096,9 @@ async function handleApi(req, res, pathname, query) {
         .digest('hex');
       // Detrás del proxy de Render, req.socket.remoteAddress es la IP
       // interna del proxy, no la del firmante — para que el rastro de
-      // auditoría de la firma sea útil de verdad hay que leer
-      // x-forwarded-for (la IP real del cliente es la primera de la lista).
-      const signerIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress;
+      // auditoría de la firma sea útil de verdad (y no falsificable) hay
+      // que leer x-forwarded-for con trustedClientIp() (ver su comentario).
+      const signerIp = trustedClientIp(req);
       s.signature = {
         storedAs: safeName,
         signedAt: new Date().toISOString(),
@@ -1102,8 +1176,15 @@ const server = http.createServer(async (req, res) => {
   // correcta requeriría auditar todos los recursos externos que carga
   // cada página (fuentes, WhatsApp, Square) y un error ahí rompe el
   // sitio en producción — mejor dejarlo como tarea aparte, deliberada.
+  // X-Frame-Options: SAMEORIGIN, no DENY — DENY rompía el propio iframe de
+  // vista previa del documento (public/app.html #docPreviewFrame, que
+  // carga /uploads/<id>, mismo origen) para cualquier firmante: la ronda
+  // anterior de arreglos agregó DENY sin probar el flujo completo del
+  // sitio y esto quedó roto en producción. SAMEORIGIN sigue bloqueando que
+  // OTRO sitio incruste firmaza.com en un iframe (protección real contra
+  // clickjacking) sin romper el uso legítimo que hace el propio sitio.
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   if (isHttps(req)) res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
 
@@ -1237,7 +1318,11 @@ const server = http.createServer(async (req, res) => {
     try {
       const file = await db.getFile(fileId);
       if (!file) return send(res, 404, { error: 'No encontrado' });
-      res.writeHead(200, { 'Content-Type': file.contentType || guessContentType(fileId) });
+      // sanitizeUploadContentType() de nuevo aquí, en defensa en profundidad:
+      // así, aunque algún día otro punto del código guarde un content-type
+      // sin pasar por ahí (o queden filas viejas guardadas antes de este
+      // arreglo), esta ruta nunca sirve HTML/SVG/JS ejecutable.
+      res.writeHead(200, { 'Content-Type': sanitizeUploadContentType(file.contentType) });
       return res.end(file.data);
     } catch (e) {
       console.error('Error sirviendo /uploads/:', e.message);
