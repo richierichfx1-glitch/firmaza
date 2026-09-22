@@ -920,12 +920,21 @@ async function handleApi(req, res, pathname, query) {
           } else if (body.mode === 'custom') {
             const cuerpo = String(body.cuerpo || '').trim();
             if (!cuerpo) return send(res, 400, { error: 'Escribe el texto de tu carta' });
-            const lengthError = fieldsWithinLimit({ titulo: body.titulo, cuerpo, lugar: body.lugar });
+            // `autor` (que termina en el PDF, ver renderCustomLetter) sale de
+            // s.signerName o, si no hay, de body.autor — ambos texto que
+            // controla quien llama a esta ruta. Antes fieldsWithinLimit()
+            // solo revisaba titulo/cuerpo/lugar: un autor (o un
+            // body.signerName, que es lo que termina poblando s.signerName)
+            // de varios megabytes se colaba sin límite y caía en el mismo
+            // problema — PDF lento o enorme — que este límite existe para
+            // evitar en primer lugar.
+            const autor = s.signerName || body.autor || '';
+            const lengthError = fieldsWithinLimit({ titulo: body.titulo, cuerpo, lugar: body.lugar, autor, signerName: body.signerName });
             if (lengthError) return send(res, 400, { error: lengthError });
             blocks = docTemplates.renderCustomLetter({
               titulo: body.titulo,
               cuerpo,
-              autor: s.signerName || body.autor || '',
+              autor,
               lugar: body.lugar,
             });
             docTitle = body.titulo || 'Carta';
