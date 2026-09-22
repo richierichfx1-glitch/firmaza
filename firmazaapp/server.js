@@ -1094,6 +1094,19 @@ const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, `http://${req.headers.host}`);
   const pathname = u.pathname;
 
+  // Cabeceras de seguridad de línea base para TODA respuesta (API y
+  // páginas estáticas) — antes no se mandaba ninguna de estas. Se ponen
+  // aquí con setHeader (no writeHead) para que apliquen sin tocar cada
+  // punto de la app que ya llama a writeHead/send con sus propias
+  // cabeceras. No se agrega Content-Security-Policy: definir una CSP
+  // correcta requeriría auditar todos los recursos externos que carga
+  // cada página (fuentes, WhatsApp, Square) y un error ahí rompe el
+  // sitio en producción — mejor dejarlo como tarea aparte, deliberada.
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (isHttps(req)) res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+
   if (req.method === 'OPTIONS') return send(res, 204, '');
 
   // Verificación del enlace mágico: crea (o encuentra) el cliente, abre una
