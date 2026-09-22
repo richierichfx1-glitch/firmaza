@@ -420,3 +420,6 @@ details[open] .nucleo-toggle .chev{transform:rotate(180deg)}
 .lang-bar .lb-grid b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin-bottom:4px}
 .lang-bar .lb-ok{display:flex;gap:8px;align-items:flex-start;cursor:pointer}
 .lang-bar .lb-ok input{margin-top:4px}
+
+/* Aviso informativo arriba de los campos de una plantilla */
+.template-notice{background:rgba(240,169,58,.14);border:1px solid rgba(240,169,58,.45);border-radius:10px;padding:10px 12px;margin:0 0 14px;font-size:14px;line-height:1.5}

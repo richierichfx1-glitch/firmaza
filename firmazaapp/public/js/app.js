@@ -246,14 +246,45 @@ function renderTemplateFields() {
   const t = templates.find((x) => x.id === selectedTemplateId);
   const container = $('#templateFields');
   if (!t) { container.innerHTML = ''; return; }
-  container.innerHTML = t.fields.map((f) => {
+  // Aviso informativo de la plantilla (p. ej. apostilla en el permiso de viaje).
+  const notice = t.notice ? `<div class="template-notice">ℹ️ ${escapeHtml(t.notice)}</div>` : '';
+  container.innerHTML = notice + t.fields.map((f) => {
     const req = f.required ? '' : ' <span class="hint" style="display:inline">(opcional)</span>';
     const ph = f.placeholder ? ` placeholder="${f.placeholder.replace(/"/g, '&quot;')}"` : '';
-    const inner = f.type === 'textarea'
-      ? `<textarea rows="4" data-fkey="${f.key}"${ph}></textarea>`
-      : `<input type="${f.type === 'date' ? 'date' : 'text'}" data-fkey="${f.key}"${ph}>`;
-    return `<div class="field" data-field-wrap="${f.key}"><label>${f.label}${req}</label>${inner}<span class="field-error" data-err-for="${f.key}"></span></div>`;
+    let inner;
+    if (f.type === 'textarea') {
+      inner = `<textarea rows="4" data-fkey="${f.key}"${ph}></textarea>`;
+    } else if (f.type === 'select') {
+      inner = `<select data-fkey="${f.key}"><option value="">Elige una opción</option>${
+        (f.options || []).map((o) => `<option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</option>`).join('')}</select>`;
+    } else {
+      inner = `<input type="${f.type === 'date' ? 'date' : 'text'}" data-fkey="${f.key}"${ph}>`;
+    }
+    const reqLabel = f.requiredIf ? '' : req; // condicionales: obligatorios cuando se muestran
+    return `<div class="field" data-field-wrap="${f.key}"><label>${f.label}${reqLabel}</label>${inner}<span class="field-error" data-err-for="${f.key}"></span></div>`;
   }).join('');
+  container.querySelectorAll('select[data-fkey]').forEach((el) => el.addEventListener('change', applyConditionalFields));
+  applyConditionalFields();
+}
+
+// Campos que solo aplican según otra respuesta (`showIf` en la plantilla),
+// p. ej. los datos del segundo firmante del permiso de viaje.
+function fieldApplies(f, values) {
+  return !f.showIf || Object.entries(f.showIf).every(([k, want]) => (values[k] || '') === want);
+}
+function currentTemplateValues() {
+  const values = {};
+  $('#templateFields').querySelectorAll('[data-fkey]').forEach((el) => { values[el.dataset.fkey] = el.value.trim(); });
+  return values;
+}
+function applyConditionalFields() {
+  const t = templates.find((x) => x.id === selectedTemplateId);
+  if (!t) return;
+  const values = currentTemplateValues();
+  for (const f of t.fields) {
+    const wrap = document.querySelector(`[data-field-wrap="${f.key}"]`);
+    if (wrap) wrap.style.display = fieldApplies(f, values) ? '' : 'none';
+  }
 }
 
 // --- Validación inline: nada de alert(), resalta el campo exacto y explica
@@ -329,11 +360,13 @@ $('#toStep1').addEventListener('click', async () => {
       return;
     }
     const t = templates.find((x) => x.id === selectedTemplateId);
-    const values = {};
-    $('#templateFields').querySelectorAll('[data-fkey]').forEach((el) => { values[el.dataset.fkey] = el.value.trim(); });
+    const values = currentTemplateValues();
+    // Los campos que no aplican (ocultos) no se mandan.
+    for (const f of t.fields) if (!fieldApplies(f, values)) values[f.key] = '';
     let missingCount = 0;
     for (const f of t.fields) {
-      if (f.required && !values[f.key]) {
+      const condRequired = f.requiredIf && Object.entries(f.requiredIf).every(([k, want]) => values[k] === want);
+      if ((f.required || condRequired) && !values[f.key]) {
         markFieldError(`[data-field-wrap="${f.key}"]`, `[data-err-for="${f.key}"]`, 'Este campo es obligatorio.');
         missingCount++;
       }
@@ -407,14 +440,12 @@ function renderLangBar() {
   const bar = $('#langBar');
   $('#langBarError').style.display = 'none';
   if (!d.versions) { bar.innerHTML = ''; return; }
-  if (d.versions.bi) {
-    bar.innerHTML = '<div class="lb-info">🌎 Este permiso de viaje sale <b>en inglés y español al mismo tiempo</b>, para que lo entiendan las autoridades de los dos países.</div>';
-    return;
-  }
   const demo = d.translationMode === 'demo'
     ? '<div class="lb-warn">⚠️ Modo de prueba: la traducción automática no está activa (falta ANTHROPIC_API_KEY en el servidor), así que tu texto aparece en español dentro de la versión en inglés.</div>'
     : '';
-  const review = (d.review || []).length && langKeep === 'en' ? `
+  // La revisión aplica a cualquier versión que lleve texto traducido al
+  // inglés: 'en' y también la bilingüe ('bi') del permiso de viaje.
+  const review = (d.review || []).length && langKeep !== 'es' ? `
     <div class="lb-review">
       <b>Revisa la traducción</b><br>
       <span class="help" style="margin:0">Lee la "traducción de regreso": si dice lo mismo que tú escribiste, la versión en inglés es correcta.</span>
@@ -428,6 +459,12 @@ function renderLangBar() {
       <label class="lb-ok"><input type="checkbox" id="langApprove"${d.translationApproved ? ' checked' : ''}>
         <span>Leí la traducción de regreso y dice lo que yo quiero decir. Si tengo dudas, puedo pedirle al notario que me la explique antes de firmar.</span></label>
     </div>` : '';
+  if (d.versions.bi) {
+    // Permiso de viaje: siempre bilingüe, sin selector — pero si hay texto
+    // traducido (destino, hospedaje…), el firmante también lo aprueba.
+    bar.innerHTML = '<div class="lb-info">🌎 Este permiso de viaje sale <b>en inglés y español al mismo tiempo</b>, para que lo entiendan las autoridades de los dos países.</div>' + demo + review;
+    return;
+  }
   bar.innerHTML = `
     <div class="lb-row">
       <span>Ver documento en:</span>
@@ -458,7 +495,7 @@ async function saveDocumentLanguage() {
   const approveEl = $('#langApprove');
   const approved = !!(approveEl && approveEl.checked);
   const showErr = (msg) => { $('#langBarError').textContent = msg; $('#langBarError').style.display = 'block'; };
-  if (langKeep === 'en' && (d.review || []).length && !approved) {
+  if (langKeep !== 'es' && (d.review || []).length && !approved) {
     showErr('Marca la casilla para confirmar que revisaste la traducción.');
     if (approveEl) approveEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
     return false;
@@ -511,6 +548,7 @@ async function applyReuseIfRequested() {
       renderTemplateFields();
       $('#templateFields').querySelectorAll('[data-fkey]').forEach((el) => {
         if (inputs[el.dataset.fkey] != null) el.value = inputs[el.dataset.fkey];
+        applyConditionalFields();
       });
     } else if (data.mode === 'custom') {
       setPrepareMode('custom');
@@ -571,8 +609,22 @@ $('#toStep2').addEventListener('click', async () => {
   $('#paymentNote').textContent = paymentMode?.demo
     ? 'Pago en modo de prueba (no se realizará ningún cargo real).'
     : 'Pago procesado de forma segura con Square.';
+  renderPriceSummary();
   showStep(2);
 });
+
+// Total a pagar: $25 base + $25 por cada firmante adicional ($10 firma +
+// $15 sello, p. ej. el otro padre/madre en el permiso de viaje). Solo es
+// informativo: el monto real lo decide el servidor en /checkout.
+function renderPriceSummary() {
+  const price = session.document && session.document.price;
+  const extras = (price && price.extraSigners) || 0;
+  $('#extraSignerRows').innerHTML = extras ? `
+    <div class="summary-row"><span>Firmante adicional${extras > 1 ? ` (×${extras})` : ''}</span><strong>$${(10 * extras).toFixed(2)}</strong></div>
+    <div class="summary-row"><span>Sello notarial adicional${extras > 1 ? ` (×${extras})` : ''}</span><strong>$${(15 * extras).toFixed(2)}</strong></div>` : '';
+  const total = price ? price.amountCents / 100 : 25;
+  $('#totalAmount').textContent = `$${total.toFixed(2)}`;
+}
 
 // --- Paso 2: pago --------------------------------------------------------------
 // El servidor decide el monto y la descripción del cargo (ver PRICE_CATALOG

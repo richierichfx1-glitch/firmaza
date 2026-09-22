@@ -84,7 +84,7 @@ async function proofFetch(url, { apiKey, method = 'GET', body } = {}) {
  * bluenotary.js / notarycam.js, para que server.js pueda usar su flujo propio
  * (WebRTC) como respaldo mientras no haya credenciales.
  */
-async function createRonSession({ sessionId, signerName, signerEmail, signerPhone, documentUrl, message, subject }) {
+async function createRonSession({ sessionId, signerName, signerEmail, signerPhone, documentUrl, message, subject, additionalSigners = [] }) {
     const apiKey = process.env.PROOF_API_KEY;
     if (!apiKey) return null;
 
@@ -93,6 +93,19 @@ async function createRonSession({ sessionId, signerName, signerEmail, signerPhon
 
   const signer = { email: signerEmail, ...splitName(signerName) };
     if (signerPhone) signer.phone_number = signerPhone;
+
+  // Firmantes adicionales (p. ej. el otro padre/madre en el permiso de viaje).
+  // Proof.com permite varios firmantes en una transacción: cada uno recibe su
+  // propia invitación por correo, verifica su identidad y firma frente al
+  // notario — juntos en la misma videollamada o por separado ("split
+  // signing"). La transacción se completa cuando firman TODOS.
+  const extraSigners = (additionalSigners || [])
+    .filter((x) => x && x.email)
+    .map((x) => {
+      const o = { email: x.email, ...splitName(x.name) };
+      if (x.phone) o.phone_number = x.phone;
+      return o;
+    });
 
   // NOTA sobre idioma del correo: la API de Proof.com NO tiene un parámetro de
   // idioma/locale. Solo estos dos campos de texto son personalizables — el
@@ -106,7 +119,7 @@ async function createRonSession({ sessionId, signerName, signerEmail, signerPhon
         message_subject: subject || `${signerName ? signerName.split(/\s+/)[0] : 'Hola'}, tu documento de Firmaza está listo para notarizar`,
         message_to_signer: message || 'Tu documento está listo. Haz clic en el botón de abajo para conectarte con un notario por video y completar la notarización. Cuando entres a la videollamada, puedes pedir un notario que hable español.',
         config_id: 'notarization',
-        signers: [signer],
+        signers: [signer, ...extraSigners],
         documents: [{ resource: documentUrl, requirement: 'notarization' }],
   };
 
