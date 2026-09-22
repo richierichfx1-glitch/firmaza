@@ -79,7 +79,7 @@ const ALWAYS_BILINGUAL = new Set(['consentimiento_viaje_menor']);
 // fechas y "Ciudad y estado donde se firma" (lugares de EE.UU.) NO se traducen.
 const TRANSLATABLE = {
   carta_poder_simple: ['poderdanteId', 'apoderadoId', 'alcance'],
-  consentimiento_viaje_menor: ['padreId', 'menorId', 'acompananteId', 'acompananteParentesco', 'destino', 'hospedaje'],
+  consentimiento_viaje_menor: ['padreId', 'segundoId', 'menorId', 'acompananteId', 'acompananteParentesco', 'destino', 'hospedaje'],
   declaracion_jurada_generica: ['declaranteId', 'declaracion'],
   carta_propia: ['titulo', 'cuerpo'],
 };
@@ -237,7 +237,30 @@ const TEMPLATES = [
       { key: 'padreTelefono', label: 'Tu teléfono (para que puedan confirmar este permiso)', type: 'text', required: true, placeholder: 'Ej. (816) 555-0123' },
       { key: 'padreCorreo', label: 'Tu correo electrónico', type: 'text', required: false, placeholder: 'Ej. tucorreo@ejemplo.com' },
       { key: 'padreDireccion', label: 'Tu dirección', type: 'text', required: false, placeholder: 'Ej. 123 Main St, Kansas City, MO 64111' },
-      { key: 'padreAusenteNombre', label: 'Nombre del otro padre/madre/tutor (si no viaja ni firma esta carta)', type: 'text', required: false, placeholder: 'Ej. Ana Ramírez Torres' },
+      // --- Segundo firmante (el otro padre/madre/tutor) ------------------
+      // Útil sobre todo cuando el menor NO viaja con ninguno de sus padres:
+      // muchos países piden la autorización de ambos. Cada firmante se
+      // notariza en Proof.com (en la misma videollamada o por separado).
+      {
+        key: 'segundoFirmante', label: '¿El otro padre/madre/tutor también firma esta carta?', type: 'select', required: true,
+        options: [
+          { value: 'no', label: 'No, solo firmo yo' },
+          { value: 'si', label: 'Sí, también firma (recomendado si el menor no viaja con ninguno de los dos)' },
+        ],
+      },
+      { key: 'padreAusenteNombre', label: 'Nombre del otro padre/madre/tutor (si no viaja ni firma esta carta)', type: 'text', required: false, placeholder: 'Ej. Ana Ramírez Torres', showIf: { segundoFirmante: 'no' } },
+      { key: 'segundoNombre', label: 'Nombre completo del otro padre/madre/tutor que firma', type: 'text', required: false, requiredIf: { segundoFirmante: 'si' }, showIf: { segundoFirmante: 'si' }, placeholder: 'Ej. Ana Gómez Silva' },
+      {
+        key: 'segundoParentesco', label: 'Su parentesco con el menor', type: 'select', required: false, requiredIf: { segundoFirmante: 'si' }, showIf: { segundoFirmante: 'si' },
+        options: [
+          { value: 'madre', label: 'Madre' },
+          { value: 'padre', label: 'Padre' },
+          { value: 'tutor', label: 'Tutor(a) legal' },
+        ],
+      },
+      { key: 'segundoId', label: 'Su identificación (tipo y número)', type: 'text', required: false, requiredIf: { segundoFirmante: 'si' }, showIf: { segundoFirmante: 'si' }, placeholder: 'Ej. Pasaporte 123456789' },
+      { key: 'segundoCorreo', label: 'Su correo electrónico (ahí recibirá la invitación para notarizar su firma)', type: 'text', required: false, requiredIf: { segundoFirmante: 'si' }, showIf: { segundoFirmante: 'si' }, placeholder: 'Ej. ana@ejemplo.com' },
+      { key: 'segundoTelefono', label: 'Su teléfono', type: 'text', required: false, requiredIf: { segundoFirmante: 'si' }, showIf: { segundoFirmante: 'si' }, placeholder: 'Ej. (816) 555-0456' },
       { key: 'acompananteNombre', label: 'Nombre del adulto que acompaña al menor (si aplica)', type: 'text', required: false, placeholder: 'Ej. Ana Lucía Vivas' },
       { key: 'acompananteParentesco', label: 'Parentesco del acompañante con el menor', type: 'text', required: false, placeholder: 'Ej. Tía, abuelo, maestra' },
       { key: 'acompananteId', label: 'Identificación del acompañante (tipo y número)', type: 'text', required: false, placeholder: 'Ej. Pasaporte 987654321' },
@@ -265,15 +288,23 @@ const TEMPLATES = [
       }[v.padreParentesco] || ['the parent/legal guardian', 'padre/madre/tutor legal'];
       const passEn = v.menorId ? `, holder of ${e.menorId}` : '';
       const passEs = v.menorId ? `, con ${v.menorId}` : '';
+      const REL_MAP = { madre: ['the mother', 'madre'], padre: ['the father', 'padre'], tutor: ['the legal guardian', 'tutor(a) legal'] };
+      const both = v.segundoFirmante === 'si' && v.segundoNombre;
+      const REL2 = REL_MAP[v.segundoParentesco] || ['the parent/legal guardian', 'padre/madre/tutor legal'];
 
       const lines = [
         { text: 'MINOR TRAVEL CONSENT LETTER', size: 16, bold: true, align: 'center', spaceAfter: 2 },
         { text: 'CARTA DE CONSENTIMIENTO DE VIAJE PARA MENORES', size: 13, bold: true, align: 'center', gray: 0.25, spaceAfter: 6 },
         { text: '(English / Español — both versions have the same content / ambas versiones tienen el mismo contenido)', size: 8, align: 'center', gray: GRAY, spaceAfter: 16 },
-        ...pair(
-          `I, ${v.padreNombre}, identified by ${e.padreId}, as ${REL[0]} of the minor ${v.menorNombre}, born on ${formatDate(v.menorNacimiento, 'en')}${passEn}, hereby authorize the minor to travel to ${e.destino}, from ${formatDate(v.fechaSalida, 'en')} to ${formatDate(v.fechaRegreso, 'en')}.`,
-          `Yo, ${v.padreNombre}, identificado(a) con ${v.padreId}, en calidad de ${REL[1]} del menor ${v.menorNombre}, nacido(a) el ${formatDate(v.menorNacimiento, 'es')}${passEs}, autorizo por medio de la presente a que viaje a ${v.destino}, del ${formatDate(v.fechaSalida, 'es')} al ${formatDate(v.fechaRegreso, 'es')}.`,
-        ),
+        ...(both
+          ? pair(
+            `We, ${v.padreNombre}, identified by ${e.padreId}, ${REL[0]}, and ${v.segundoNombre}, identified by ${e.segundoId}, ${REL2[0]}, of the minor ${v.menorNombre}, born on ${formatDate(v.menorNacimiento, 'en')}${passEn}, hereby authorize the minor to travel to ${e.destino}, from ${formatDate(v.fechaSalida, 'en')} to ${formatDate(v.fechaRegreso, 'en')}.`,
+            `Nosotros, ${v.padreNombre}, identificado(a) con ${v.padreId}, ${REL[1]}, y ${v.segundoNombre}, identificado(a) con ${v.segundoId}, ${REL2[1]}, del menor ${v.menorNombre}, nacido(a) el ${formatDate(v.menorNacimiento, 'es')}${passEs}, autorizamos por medio de la presente a que viaje a ${v.destino}, del ${formatDate(v.fechaSalida, 'es')} al ${formatDate(v.fechaRegreso, 'es')}.`,
+          )
+          : pair(
+            `I, ${v.padreNombre}, identified by ${e.padreId}, as ${REL[0]} of the minor ${v.menorNombre}, born on ${formatDate(v.menorNacimiento, 'en')}${passEn}, hereby authorize the minor to travel to ${e.destino}, from ${formatDate(v.fechaSalida, 'en')} to ${formatDate(v.fechaRegreso, 'en')}.`,
+            `Yo, ${v.padreNombre}, identificado(a) con ${v.padreId}, en calidad de ${REL[1]} del menor ${v.menorNombre}, nacido(a) el ${formatDate(v.menorNacimiento, 'es')}${passEs}, autorizo por medio de la presente a que viaje a ${v.destino}, del ${formatDate(v.fechaSalida, 'es')} al ${formatDate(v.fechaRegreso, 'es')}.`,
+          )),
       ];
 
       if (v.acompananteNombre) {
@@ -294,7 +325,7 @@ const TEMPLATES = [
           `Durante el viaje, el menor se hospedará en: ${v.hospedaje}.`,
         ));
       }
-      if (v.padreAusenteNombre) {
+      if (!both && v.padreAusenteNombre) {
         lines.push(...pair(
           `The minor's other parent/guardian, ${v.padreAusenteNombre}, is not traveling and is not signing this letter.`,
           `El otro padre/madre/tutor del menor, ${v.padreAusenteNombre}, no viaja ni firma esta carta.`,
@@ -305,7 +336,16 @@ const TEMPLATES = [
       // aerolínea puedan confirmar el permiso.
       const contactEn = [v.padreTelefono && `phone ${v.padreTelefono}`, v.padreCorreo && `email ${v.padreCorreo}`].filter(Boolean).join(', ');
       const contactEs = [v.padreTelefono && `teléfono ${v.padreTelefono}`, v.padreCorreo && `correo ${v.padreCorreo}`].filter(Boolean).join(', ');
-      if (contactEn || v.padreDireccion) {
+      if (both) {
+        const c2En = [v.segundoTelefono && `phone ${v.segundoTelefono}`, v.segundoCorreo && `email ${v.segundoCorreo}`].filter(Boolean).join(', ');
+        const c2Es = [v.segundoTelefono && `teléfono ${v.segundoTelefono}`, v.segundoCorreo && `correo ${v.segundoCorreo}`].filter(Boolean).join(', ');
+        const addrEn = v.padreDireccion ? `; address ${v.padreDireccion}` : '';
+        const addrEs = v.padreDireccion ? `; dirección ${v.padreDireccion}` : '';
+        lines.push(...pair(
+          `To confirm this authorization, we can be contacted at: ${v.padreNombre}: ${contactEn}${addrEn}. ${v.segundoNombre}: ${c2En}.`,
+          `Para confirmar esta autorización, pueden contactarnos a: ${v.padreNombre}: ${contactEs}${addrEs}. ${v.segundoNombre}: ${c2Es}.`,
+        ));
+      } else if (contactEn || v.padreDireccion) {
         lines.push(...pair(
           `To confirm this authorization, I can be contacted at: ${contactEn}${v.padreDireccion ? `${contactEn ? '; ' : ''}address ${v.padreDireccion}` : ''}.`,
           `Para confirmar esta autorización, pueden contactarme a: ${contactEs}${v.padreDireccion ? `${contactEs ? '; ' : ''}dirección ${v.padreDireccion}` : ''}.`,
@@ -313,15 +353,25 @@ const TEMPLATES = [
       }
 
       lines.push(
-        ...pair(
-          'I declare that this authorization is given voluntarily and that the information provided herein is true.',
-          'Declaro que esta autorización es voluntaria y que la información aquí proporcionada es verdadera.',
-          18,
-        ),
+        ...(both
+          ? pair(
+            'We declare that this authorization is given voluntarily and that the information provided herein is true.',
+            'Declaramos que esta autorización es voluntaria y que la información aquí proporcionada es verdadera.',
+            18,
+          )
+          : pair(
+            'I declare that this authorization is given voluntarily and that the information provided herein is true.',
+            'Declaro que esta autorización es voluntaria y que la información aquí proporcionada es verdadera.',
+            18,
+          )),
         { text: SIGN_DATE_EN(v.lugar), size: 10, spaceAfter: 3 },
         { text: SIGN_DATE_ES(v.lugar), size: 10, spaceAfter: 30, gray: 0.25 },
         { text: '_______________________________', spaceAfter: 2 },
-        { text: `${v.padreNombre} — Signature / Firma`, size: 9, spaceAfter: 12 },
+        { text: `${v.padreNombre} — Signature / Firma`, size: 9, spaceAfter: both ? 26 : 12 },
+        ...(both ? [
+          { text: '_______________________________', spaceAfter: 2 },
+          { text: `${v.segundoNombre} — Signature / Firma`, size: 9, spaceAfter: 12 },
+        ] : []),
         { text: LEGAL_DISCLAIMER_EN, size: 8, spaceBefore: 6, spaceAfter: 6 },
         { text: `${LEGAL_DISCLAIMER} ${TRANSLATION_NOTE_ES}`, size: 8, gray: GRAY },
       );
@@ -364,6 +414,16 @@ const TEMPLATES = [
   },
 ];
 
+/** Firmantes adicionales que hay que invitar a Proof.com además del
+ * firmante principal de la sesión (hoy: el segundo padre/madre del permiso de
+ * viaje). Devuelve [{ name, email, phone }]. */
+function additionalSigners(templateId, values) {
+  if (templateId === 'consentimiento_viaje_menor' && values?.segundoFirmante === 'si' && values.segundoNombre && values.segundoCorreo) {
+    return [{ name: values.segundoNombre, email: String(values.segundoCorreo).trim(), phone: values.segundoTelefono || '' }];
+  }
+  return [];
+}
+
 function getTemplate(id) {
   return TEMPLATES.find((t) => t.id === id) || null;
 }
@@ -386,7 +446,10 @@ function validateValues(template, values) {
     const val = String(values?.[f.key] || '').trim();
     // Un <select> solo acepta sus opciones definidas (defensa del servidor).
     const invalidOption = f.type === 'select' && val && !(f.options || []).some((o) => o.value === val);
-    if ((f.required && !val) || invalidOption) {
+    // requiredIf: { otroCampo: 'valor' } → obligatorio solo en ese caso.
+    const condRequired = f.requiredIf && Object.entries(f.requiredIf)
+      .every(([k, want]) => String(values?.[k] || '').trim() === want);
+    if (((f.required || condRequired) && !val) || invalidOption) {
       missing.push({ key: f.key, label: f.label });
     }
   }
@@ -421,4 +484,5 @@ module.exports = {
   listTemplates, getTemplate, validateValues, renderCustomLetter, LEGAL_DISCLAIMER,
   // Idiomas
   ALWAYS_BILINGUAL, REVIEW_FIELDS, fieldsToTranslate, translateIdLocal, formatDate,
+  additionalSigners,
 };

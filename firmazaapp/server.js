@@ -914,6 +914,18 @@ async function handleApi(req, res, pathname, query) {
                 missingFields: missing,
               });
             }
+            // Segundo firmante (permiso de viaje): Proof.com le manda su propia
+            // invitación, así que su correo tiene que ser válido y distinto
+            // del de quien llena el formulario.
+            for (const extra of docTemplates.additionalSigners(template.id, values)) {
+              const mainEmail = String(body.email || s.email || '').trim().toLowerCase();
+              if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(extra.email)) {
+                return send(res, 400, { error: `El correo de ${extra.name} no es válido.`, missingFields: [{ key: 'segundoCorreo', label: 'Correo del otro firmante' }] });
+              }
+              if (extra.email.toLowerCase() === mainEmail) {
+                return send(res, 400, { error: 'El otro firmante necesita un correo distinto al tuyo: cada firmante recibe su propia invitación para notarizar.', missingFields: [{ key: 'segundoCorreo', label: 'Correo del otro firmante' }] });
+              }
+            }
             renderFor = (lang, tr) => template.render(values, { lang, tr });
             docTitle = template.name;
             templateId = template.id;
@@ -1186,6 +1198,9 @@ async function handleApi(req, res, pathname, query) {
             signerName: s.signerName,
             signerEmail: s.email,
             documentUrl,
+            // Otros firmantes del mismo documento (p. ej. el otro padre/madre
+            // en el permiso de viaje) — ver additionalSigners().
+            additionalSigners: docTemplates.additionalSigners(s.document.templateId, s.document.inputs),
           });
           if (!result) {
             // Sin PROOF_API_KEY configurada: seguimos en modo demo (cola interna + WebRTC).

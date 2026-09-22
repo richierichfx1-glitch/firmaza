@@ -260,8 +260,31 @@ function renderTemplateFields() {
     } else {
       inner = `<input type="${f.type === 'date' ? 'date' : 'text'}" data-fkey="${f.key}"${ph}>`;
     }
-    return `<div class="field" data-field-wrap="${f.key}"><label>${f.label}${req}</label>${inner}<span class="field-error" data-err-for="${f.key}"></span></div>`;
+    const reqLabel = f.requiredIf ? '' : req; // condicionales: obligatorios cuando se muestran
+    return `<div class="field" data-field-wrap="${f.key}"><label>${f.label}${reqLabel}</label>${inner}<span class="field-error" data-err-for="${f.key}"></span></div>`;
   }).join('');
+  container.querySelectorAll('select[data-fkey]').forEach((el) => el.addEventListener('change', applyConditionalFields));
+  applyConditionalFields();
+}
+
+// Campos que solo aplican según otra respuesta (`showIf` en la plantilla),
+// p. ej. los datos del segundo firmante del permiso de viaje.
+function fieldApplies(f, values) {
+  return !f.showIf || Object.entries(f.showIf).every(([k, want]) => (values[k] || '') === want);
+}
+function currentTemplateValues() {
+  const values = {};
+  $('#templateFields').querySelectorAll('[data-fkey]').forEach((el) => { values[el.dataset.fkey] = el.value.trim(); });
+  return values;
+}
+function applyConditionalFields() {
+  const t = templates.find((x) => x.id === selectedTemplateId);
+  if (!t) return;
+  const values = currentTemplateValues();
+  for (const f of t.fields) {
+    const wrap = document.querySelector(`[data-field-wrap="${f.key}"]`);
+    if (wrap) wrap.style.display = fieldApplies(f, values) ? '' : 'none';
+  }
 }
 
 // --- Validación inline: nada de alert(), resalta el campo exacto y explica
@@ -337,11 +360,13 @@ $('#toStep1').addEventListener('click', async () => {
       return;
     }
     const t = templates.find((x) => x.id === selectedTemplateId);
-    const values = {};
-    $('#templateFields').querySelectorAll('[data-fkey]').forEach((el) => { values[el.dataset.fkey] = el.value.trim(); });
+    const values = currentTemplateValues();
+    // Los campos que no aplican (ocultos) no se mandan.
+    for (const f of t.fields) if (!fieldApplies(f, values)) values[f.key] = '';
     let missingCount = 0;
     for (const f of t.fields) {
-      if (f.required && !values[f.key]) {
+      const condRequired = f.requiredIf && Object.entries(f.requiredIf).every(([k, want]) => values[k] === want);
+      if ((f.required || condRequired) && !values[f.key]) {
         markFieldError(`[data-field-wrap="${f.key}"]`, `[data-err-for="${f.key}"]`, 'Este campo es obligatorio.');
         missingCount++;
       }
@@ -519,6 +544,7 @@ async function applyReuseIfRequested() {
       renderTemplateFields();
       $('#templateFields').querySelectorAll('[data-fkey]').forEach((el) => {
         if (inputs[el.dataset.fkey] != null) el.value = inputs[el.dataset.fkey];
+        applyConditionalFields();
       });
     } else if (data.mode === 'custom') {
       setPrepareMode('custom');
