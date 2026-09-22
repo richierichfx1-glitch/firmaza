@@ -133,7 +133,10 @@
     <div id="docPreview" style="display:none">
       <h3 style="margin-top:0">Revisa tu documento</h3>
       <p class="help">Así va a quedar tu documento. Si algo está mal, puedes editarlo antes de continuar.</p>
+      <!-- Idioma del documento: ver renderLangBar() en js/app.js -->
+      <div id="langBar" class="lang-bar"></div>
       <iframe id="docPreviewFrame" class="doc-preview-frame" title="Vista previa del documento"></iframe>
+      <p class="field-error" id="langBarError" style="display:none"></p>
       <br><br>
       <div style="display:flex;gap:10px">
         <button type="button" class="btn btn-outline" id="docPreviewEdit">✏️ Editar</button>

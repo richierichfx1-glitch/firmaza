@@ -125,8 +125,10 @@ function wrapText(text, sizePt, maxWidth) {
 }
 
 /**
- * `blocks`: array de { text, size?, bold?, spaceBefore?, spaceAfter?, align? }
+ * `blocks`: array de { text, size?, bold?, spaceBefore?, spaceAfter?, align?, gray? }
  * `align` soporta 'left' (por defecto) y 'center'.
+ * `gray` es el tono del texto: 0 = negro (por defecto), 0.45 = gris (se usa
+ * para las líneas de referencia en español debajo del texto en inglés).
  * Devuelve un Buffer con el PDF completo.
  */
 function renderPdf(blocks) {
@@ -145,6 +147,7 @@ function renderPdf(blocks) {
         size,
         bold,
         align: block.align || 'left',
+        gray: typeof block.gray === 'number' ? block.gray : 0,
         lineHeight: size * lineHeightFactor,
         spaceBefore: idx === 0 ? (block.spaceBefore || 0) : 0,
       });
@@ -172,6 +175,7 @@ function renderPdf(blocks) {
     let ops = [];
     let currentFont = null;
     let currentSize = null;
+    let currentGray = 0;
     for (const line of pageLines) {
       if (!line.text) continue;
       const font = line.bold ? 'F2' : 'F1';
@@ -181,6 +185,10 @@ function renderPdf(blocks) {
       if (font !== currentFont || line.size !== currentSize) {
         ops.push(`/${font} ${line.size} Tf`);
         currentFont = font; currentSize = line.size;
+      }
+      if (line.gray !== currentGray) {
+        ops.push(`${line.gray.toFixed(2)} g`);
+        currentGray = line.gray;
       }
       ops.push(`1 0 0 1 ${x.toFixed(2)} ${line.y.toFixed(2)} Tm`);
       ops.push(`(${pdfEscape(line.text)}) Tj`);

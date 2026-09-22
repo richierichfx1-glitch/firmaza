@@ -27,6 +27,8 @@
  *   GET  /api/payment-mode           -> si el pago es real (Square configurado) o una simulación, para el aviso en /app
  *   GET  /api/document-templates    -> lista de plantillas que Firmaza puede preparar (ver lib/documentTemplates.js)
  *   POST /api/sessions/:id/prepare-document -> genera un PDF (plantilla o carta dictada por el cliente) y lo deja como el documento de la sesión
+ *                                        (en inglés por defecto + versión en español; el permiso de viaje sale bilingüe)
+ *   POST /api/sessions/:id/document-language -> el firmante elige con qué idioma se queda ('en' | 'es') y aprueba la traducción
  *   POST /api/sessions/:id/upload   -> sube un documento (base64 JSON)
  *   POST /api/sessions/:id/verify   -> guarda datos de verificación de identidad
  *   POST /api/sessions/:id/checkout -> crea sesión de pago (Stripe REST) o modo demo
@@ -70,6 +72,7 @@ const { URL } = require('url');
 const proofRon = require('./integrations/proof');
 const { renderPdf } = require('./lib/pdf');
 const docTemplates = require('./lib/documentTemplates');
+const { translateFields } = require('./lib/translate');
 const db = require('./lib/db');
 
 const PORT = process.env.PORT || 8080;
@@ -894,7 +897,9 @@ async function handleApi(req, res, pathname, query) {
           return send(res, 409, { error: 'Esta sesión ya está pagada/notarizada — no se puede reemplazar el documento.' });
         }
         const body = await readBody(req);
-        let blocks, docTitle, templateId = null, inputs = null;
+        // renderFor(lang, tr) → bloques del PDF en ese idioma. Ver
+        // "IDIOMAS" en lib/documentTemplates.js.
+        let renderFor, docTitle, templateId = null, inputs = null;
         try {
           if (body.mode === 'template') {
             const template = docTemplates.getTemplate(body.templateId);
@@ -909,7 +914,7 @@ async function handleApi(req, res, pathname, query) {
                 missingFields: missing,
               });
             }
-            blocks = template.render(values);
+            renderFor = (lang, tr) => template.render(values, { lang, tr });
             docTitle = template.name;
             templateId = template.id;
             // Guardamos los valores que el cliente escribió (no solo el PDF ya
@@ -931,28 +936,66 @@ async function handleApi(req, res, pathname, query) {
             const autor = s.signerName || body.autor || '';
             const lengthError = fieldsWithinLimit({ titulo: body.titulo, cuerpo, lugar: body.lugar, autor, signerName: body.signerName });
             if (lengthError) return send(res, 400, { error: lengthError });
-            blocks = docTemplates.renderCustomLetter({
+            renderFor = (lang, tr) => docTemplates.renderCustomLetter({
               titulo: body.titulo,
               cuerpo,
               autor,
               lugar: body.lugar,
-            });
+            }, { lang, tr });
             docTitle = body.titulo || 'Carta';
             inputs = { titulo: body.titulo || '', cuerpo, lugar: body.lugar || '' };
           } else {
             return send(res, 400, { error: 'mode debe ser "template" o "custom"' });
           }
-          const pdfBuffer = renderPdf(blocks);
-          const safeName = `${id}-preparado-${Date.now()}.pdf`;
-          await db.saveFile(safeName, pdfBuffer, 'application/pdf');
+          // --- Idiomas ------------------------------------------------------
+          // El cliente escribe en español. Se generan de una vez las dos
+          // versiones (inglés y español) para que en la vista previa pueda
+          // cambiar entre ellas al instante y elegir con cuál se queda; el
+          // documento que queda activo por defecto es el INGLÉS. El permiso
+          // de viaje para menores genera solo la versión bilingüe.
+          const langKey = templateId || 'carta_propia';
+          const pending = docTemplates.fieldsToTranslate(langKey, inputs);
+          let translation;
+          try {
+            translation = await translateFields(pending);
+          } catch (e) {
+            console.error('[translate]', e.message);
+            return send(res, 502, { error: 'No pudimos traducir tu documento en este momento. Intenta de nuevo en un minuto.' });
+          }
+          const langs = docTemplates.ALWAYS_BILINGUAL.has(langKey) ? ['bi'] : ['en', 'es'];
+          const stamp = Date.now();
+          const versions = {};
+          for (const lang of langs) {
+            const pdfBuffer = renderPdf(renderFor(lang, translation.en));
+            const name = `${id}-preparado-${stamp}-${lang}.pdf`;
+            await db.saveFile(name, pdfBuffer, 'application/pdf');
+            versions[lang] = name;
+          }
+          const defaultLang = langs[0]; // 'en' o 'bi'
+          // Lo que el cliente revisa en la vista previa: lo que escribió, cómo
+          // quedó en inglés y la traducción de regreso al español.
+          const review = (docTemplates.REVIEW_FIELDS[langKey] || [])
+            .filter(([key]) => pending[key])
+            .map(([key, label]) => ({
+              key, label,
+              original: pending[key],
+              en: translation.en[key],
+              back: translation.back[key],
+            }));
           s.document = {
             originalName: `${docTitle}.pdf`,
-            storedAs: safeName,
+            storedAs: versions[defaultLang],
             uploadedAt: new Date().toISOString(),
             preparedByFirmaza: true,
             mode: body.mode,
             templateId,
             inputs,
+            language: defaultLang,
+            versions,
+            translationMode: translation.mode, // 'real' | 'demo' | 'none'
+            review,
+            // Solo hace falta aprobar si hay versión en inglés con texto traducido.
+            translationApproved: review.length === 0,
           };
           if (body.signerName) s.signerName = body.signerName;
           if (body.email) s.email = body.email;
@@ -963,6 +1006,33 @@ async function handleApi(req, res, pathname, query) {
         } catch (e) {
           return send(res, 500, { error: e.message });
         }
+      }
+
+      // El firmante elige con qué versión se queda ('en' o 'es') y, si se
+      // queda con la de inglés, confirma que revisó la traducción. Cambia
+      // `storedAs` — que es el archivo que se paga y se manda a notarizar.
+      if (sub === '/document-language' && req.method === 'POST') {
+        if (documentLocked(s)) {
+          return send(res, 409, { error: 'Esta sesión ya está pagada/notarizada — no se puede cambiar el documento.' });
+        }
+        const d = s.document;
+        if (!d || !d.versions) return send(res, 400, { error: 'Este documento no tiene versiones de idioma.' });
+        const body = await readBody(req);
+        const lang = d.versions.bi ? 'bi' : body.lang;
+        if (!d.versions[lang]) return send(res, 400, { error: 'Idioma no válido.' });
+        const needsApproval = lang !== 'es' && (d.review || []).length > 0;
+        if (needsApproval && body.approved !== true) {
+          return send(res, 400, { error: 'Confirma que revisaste la traducción antes de continuar.' });
+        }
+        d.language = lang;
+        d.storedAs = d.versions[lang];
+        if (needsApproval) {
+          d.translationApproved = true;
+          d.translationApprovedAt = new Date().toISOString();
+        }
+        s.history.push({ event: 'idioma_documento_elegido', at: new Date().toISOString(), language: lang });
+        await txn.saveSession(s);
+        return send(res, 200, { session: s });
       }
 
       if (sub === '/verify' && req.method === 'POST') {
@@ -987,6 +1057,11 @@ async function handleApi(req, res, pathname, query) {
         // podía generar más de un payment link/orden para la misma sesión.)
         if (s.payment?.paidAt) {
           return send(res, 200, { demo: s.payment.mode === 'demo', session: s });
+        }
+        // Un documento en inglés con texto traducido automáticamente no se
+        // cobra ni se notariza sin que el firmante haya aprobado la traducción.
+        if (s.document?.versions && s.document.language !== 'es' && !s.document.translationApproved) {
+          return send(res, 400, { error: 'Primero revisa y aprueba la traducción de tu documento.' });
         }
         await readBody(req); // se descarta a propósito — ver nota abajo sobre PRICE_CATALOG
         // El monto y la descripción del cargo NUNCA deben venir del cliente:

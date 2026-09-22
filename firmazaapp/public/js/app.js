@@ -287,6 +287,16 @@ function scrollToFirstError() {
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
+// Generar + traducir el documento puede tardar unos segundos: evitar doble
+// clic y avisar qué está pasando.
+function setPreparingState() {
+  const btn = $('#toStep1');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Preparando y traduciendo tu documento…';
+  return () => { btn.disabled = false; btn.textContent = original; };
+}
+
 $('#toStep1').addEventListener('click', async () => {
   clearErrors();
   const name = $('#signerName').value.trim();
@@ -333,10 +343,12 @@ $('#toStep1').addEventListener('click', async () => {
       scrollToFirstError();
       return;
     }
+    const releaseBtn = setPreparingState();
     try {
       const { session: updated } = await api('/prepare-document', 'POST', { mode: 'template', templateId: selectedTemplateId, values, signerName: name, email });
       session = updated;
     } catch (e) { showFormError('No se pudo generar el documento: ' + e.message); return; }
+    finally { releaseBtn(); }
     showDocPreview();
   } else if (docMode === 'prepare' && prepareMode === 'custom') {
     const titulo = $('#customTitulo').value.trim();
@@ -347,10 +359,12 @@ $('#toStep1').addEventListener('click', async () => {
       scrollToFirstError();
       return;
     }
+    const releaseBtn = setPreparingState();
     try {
       const { session: updated } = await api('/prepare-document', 'POST', { mode: 'custom', titulo, cuerpo, lugar, signerName: name, email });
       session = updated;
     } catch (e) { showFormError('No se pudo generar el documento: ' + e.message); return; }
+    finally { releaseBtn(); }
     showDocPreview();
   } else {
     return; // modo referido: no hay nada que subir todavía
@@ -364,8 +378,99 @@ $('#toStep1').addEventListener('click', async () => {
 function showDocPreview() {
   $('#docChooser').style.display = 'none';
   $('#docPreview').style.display = '';
-  $('#docPreviewFrame').src = `/uploads/${session.document.storedAs}`;
+  const d = session.document;
+  // Inglés por defecto (o bilingüe para el permiso de viaje) — ver
+  // "IDIOMAS" en lib/documentTemplates.js.
+  langKeep = d.language || (d.versions && d.versions.bi ? 'bi' : 'en');
+  showLangVersion(langKeep);
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// --- Idioma del documento ---------------------------------------------------
+// El cliente llena todo en español. El documento sale en inglés por defecto;
+// en la vista previa puede verlo en español y elegir con cuál versión se
+// queda. Si se queda con la de inglés, revisa la traducción (lo que escribió
+// / cómo quedó en inglés / traducción de regreso al español) y la aprueba.
+// El permiso de viaje para menores sale siempre bilingüe, sin selector.
+let langViewing = null; // versión que se está viendo
+let langKeep = null;    // versión con la que se queda
+
+function showLangVersion(lang) {
+  const d = session.document;
+  langViewing = lang;
+  $('#docPreviewFrame').src = `/uploads/${d.versions ? d.versions[lang] : d.storedAs}`;
+  renderLangBar();
+}
+
+function renderLangBar() {
+  const d = session.document;
+  const bar = $('#langBar');
+  $('#langBarError').style.display = 'none';
+  if (!d.versions) { bar.innerHTML = ''; return; }
+  if (d.versions.bi) {
+    bar.innerHTML = '<div class="lb-info">🌎 Este permiso de viaje sale <b>en inglés y español al mismo tiempo</b>, para que lo entiendan las autoridades de los dos países.</div>';
+    return;
+  }
+  const demo = d.translationMode === 'demo'
+    ? '<div class="lb-warn">⚠️ Modo de prueba: la traducción automática no está activa (falta ANTHROPIC_API_KEY en el servidor), así que tu texto aparece en español dentro de la versión en inglés.</div>'
+    : '';
+  const review = (d.review || []).length && langKeep === 'en' ? `
+    <div class="lb-review">
+      <b>Revisa la traducción</b><br>
+      <span class="help" style="margin:0">Lee la "traducción de regreso": si dice lo mismo que tú escribiste, la versión en inglés es correcta.</span>
+      ${d.review.map((r) => `
+        <div style="margin-top:10px;font-weight:600">${escapeHtml(r.label)}</div>
+        <div class="lb-grid">
+          <div><b>Lo que escribiste</b>${escapeHtml(r.original)}</div>
+          <div><b>Así quedó en inglés</b>${escapeHtml(r.en)}</div>
+          <div><b>Traducción de regreso</b>${escapeHtml(r.back)}</div>
+        </div>`).join('')}
+      <label class="lb-ok"><input type="checkbox" id="langApprove"${d.translationApproved ? ' checked' : ''}>
+        <span>Leí la traducción de regreso y dice lo que yo quiero decir. Si tengo dudas, puedo pedirle al notario que me la explique antes de firmar.</span></label>
+    </div>` : '';
+  bar.innerHTML = `
+    <div class="lb-row">
+      <span>Ver documento en:</span>
+      <span class="lb-seg">
+        <button type="button" data-lang-view="en" class="${langViewing === 'en' ? 'on' : ''}">English</button>
+        <button type="button" data-lang-view="es" class="${langViewing === 'es' ? 'on' : ''}">Español</button>
+      </span>
+    </div>
+    <div class="lb-info">Tu documento está <b>en inglés</b>, que es lo que normalmente piden en EE.UU. Puedes verlo en español para entender qué dice, y elegir con cuál versión te quedas.</div>
+    ${demo}
+    <div><b>¿Qué versión quieres notarizar?</b></div>
+    <div class="lb-keep">
+      <label class="${langKeep === 'en' ? 'on' : ''}"><input type="radio" name="langKeep" value="en" ${langKeep === 'en' ? 'checked' : ''}> Inglés (recomendado)</label>
+      <label class="${langKeep === 'es' ? 'on' : ''}"><input type="radio" name="langKeep" value="es" ${langKeep === 'es' ? 'checked' : ''}> Español</label>
+    </div>
+    ${review}`;
+  bar.querySelectorAll('[data-lang-view]').forEach((b) => b.addEventListener('click', () => showLangVersion(b.dataset.langView)));
+  bar.querySelectorAll('input[name=langKeep]').forEach((r) => r.addEventListener('change', () => {
+    langKeep = r.value;
+    showLangVersion(langKeep);
+  }));
+}
+
+// Guarda en el servidor la versión elegida. Devuelve false si falta algo.
+async function saveDocumentLanguage() {
+  const d = session.document;
+  if (!d || !d.versions) return true;
+  const approveEl = $('#langApprove');
+  const approved = !!(approveEl && approveEl.checked);
+  const showErr = (msg) => { $('#langBarError').textContent = msg; $('#langBarError').style.display = 'block'; };
+  if (langKeep === 'en' && (d.review || []).length && !approved) {
+    showErr('Marca la casilla para confirmar que revisaste la traducción.');
+    if (approveEl) approveEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return false;
+  }
+  try {
+    const { session: updated } = await api('/document-language', 'POST', { lang: langKeep, approved });
+    session = updated;
+    return true;
+  } catch (e) {
+    showErr('No se pudo guardar el idioma del documento: ' + e.message);
+    return false;
+  }
 }
 
 $('#docPreviewEdit').addEventListener('click', () => {
@@ -373,7 +478,8 @@ $('#docPreviewEdit').addEventListener('click', () => {
   $('#docChooser').style.display = '';
 });
 
-$('#docPreviewConfirm').addEventListener('click', () => {
+$('#docPreviewConfirm').addEventListener('click', async () => {
+  if (!(await saveDocumentLanguage())) return;
   showStep(1);
   loadIdvMode();
 });
