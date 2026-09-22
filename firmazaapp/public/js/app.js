@@ -440,14 +440,12 @@ function renderLangBar() {
   const bar = $('#langBar');
   $('#langBarError').style.display = 'none';
   if (!d.versions) { bar.innerHTML = ''; return; }
-  if (d.versions.bi) {
-    bar.innerHTML = '<div class="lb-info">🌎 Este permiso de viaje sale <b>en inglés y español al mismo tiempo</b>, para que lo entiendan las autoridades de los dos países.</div>';
-    return;
-  }
   const demo = d.translationMode === 'demo'
     ? '<div class="lb-warn">⚠️ Modo de prueba: la traducción automática no está activa (falta ANTHROPIC_API_KEY en el servidor), así que tu texto aparece en español dentro de la versión en inglés.</div>'
     : '';
-  const review = (d.review || []).length && langKeep === 'en' ? `
+  // La revisión aplica a cualquier versión que lleve texto traducido al
+  // inglés: 'en' y también la bilingüe ('bi') del permiso de viaje.
+  const review = (d.review || []).length && langKeep !== 'es' ? `
     <div class="lb-review">
       <b>Revisa la traducción</b><br>
       <span class="help" style="margin:0">Lee la "traducción de regreso": si dice lo mismo que tú escribiste, la versión en inglés es correcta.</span>
@@ -461,6 +459,12 @@ function renderLangBar() {
       <label class="lb-ok"><input type="checkbox" id="langApprove"${d.translationApproved ? ' checked' : ''}>
         <span>Leí la traducción de regreso y dice lo que yo quiero decir. Si tengo dudas, puedo pedirle al notario que me la explique antes de firmar.</span></label>
     </div>` : '';
+  if (d.versions.bi) {
+    // Permiso de viaje: siempre bilingüe, sin selector — pero si hay texto
+    // traducido (destino, hospedaje…), el firmante también lo aprueba.
+    bar.innerHTML = '<div class="lb-info">🌎 Este permiso de viaje sale <b>en inglés y español al mismo tiempo</b>, para que lo entiendan las autoridades de los dos países.</div>' + demo + review;
+    return;
+  }
   bar.innerHTML = `
     <div class="lb-row">
       <span>Ver documento en:</span>
@@ -491,7 +495,7 @@ async function saveDocumentLanguage() {
   const approveEl = $('#langApprove');
   const approved = !!(approveEl && approveEl.checked);
   const showErr = (msg) => { $('#langBarError').textContent = msg; $('#langBarError').style.display = 'block'; };
-  if (langKeep === 'en' && (d.review || []).length && !approved) {
+  if (langKeep !== 'es' && (d.review || []).length && !approved) {
     showErr('Marca la casilla para confirmar que revisaste la traducción.');
     if (approveEl) approveEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
     return false;
@@ -605,8 +609,22 @@ $('#toStep2').addEventListener('click', async () => {
   $('#paymentNote').textContent = paymentMode?.demo
     ? 'Pago en modo de prueba (no se realizará ningún cargo real).'
     : 'Pago procesado de forma segura con Square.';
+  renderPriceSummary();
   showStep(2);
 });
+
+// Total a pagar: $25 base + $25 por cada firmante adicional ($10 firma +
+// $15 sello, p. ej. el otro padre/madre en el permiso de viaje). Solo es
+// informativo: el monto real lo decide el servidor en /checkout.
+function renderPriceSummary() {
+  const price = session.document && session.document.price;
+  const extras = (price && price.extraSigners) || 0;
+  $('#extraSignerRows').innerHTML = extras ? `
+    <div class="summary-row"><span>Firmante adicional${extras > 1 ? ` (×${extras})` : ''}</span><strong>$${(10 * extras).toFixed(2)}</strong></div>
+    <div class="summary-row"><span>Sello notarial adicional${extras > 1 ? ` (×${extras})` : ''}</span><strong>$${(15 * extras).toFixed(2)}</strong></div>` : '';
+  const total = price ? price.amountCents / 100 : 25;
+  $('#totalAmount').textContent = `$${total.toFixed(2)}`;
+}
 
 // --- Paso 2: pago --------------------------------------------------------------
 // El servidor decide el monto y la descripción del cargo (ver PRICE_CATALOG

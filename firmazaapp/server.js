@@ -209,8 +209,30 @@ setInterval(() => {
 // adicionales el día que el checkout los soporte, sin reabrir este hueco.
 const PRICE_CATALOG = {
   primer_sello: { amountCents: 2500, description: 'Primer sello notarial — Firmaza' },
+  // Mismos precios que public/index.html #precios. Cada firmante adicional
+  // (p. ej. el otro padre/madre en el permiso de viaje) paga su firma y su
+  // propio sello: $10 + $15 = $25 más.
+  firmante_adicional: { amountCents: 1000, description: 'Firmante adicional' },
+  sello_adicional: { amountCents: 1500, description: 'Sello notarial adicional' },
 };
 const DEFAULT_PRICE_ITEM = 'primer_sello';
+
+/** Precio de una sesión, calculado SOLO del lado del servidor a partir del
+ * documento guardado (nunca de lo que mande el navegador). */
+function priceForSession(s) {
+  const base = PRICE_CATALOG[DEFAULT_PRICE_ITEM];
+  const extras = s.document && s.document.preparedByFirmaza
+    ? docTemplates.additionalSigners(s.document.templateId, s.document.inputs).length
+    : 0;
+  const extraCents = extras * (PRICE_CATALOG.firmante_adicional.amountCents + PRICE_CATALOG.sello_adicional.amountCents);
+  return {
+    amountCents: base.amountCents + extraCents,
+    extraSigners: extras,
+    description: extras
+      ? `${base.description} + ${extras} firmante(s) y sello(s) adicional(es)`
+      : base.description,
+  };
+}
 const SESSION_COOKIE = 'firmaza_session';
 function sessionCookieHeader(req, token, maxAgeSeconds) {
   const parts = [
@@ -1009,6 +1031,9 @@ async function handleApi(req, res, pathname, query) {
             // Solo hace falta aprobar si hay versión en inglés con texto traducido.
             translationApproved: review.length === 0,
           };
+          // Para mostrar el total correcto en el paso de pago (el cobro real
+          // lo vuelve a calcular /checkout del lado del servidor).
+          s.document.price = priceForSession(s);
           if (body.signerName) s.signerName = body.signerName;
           if (body.email) s.email = body.email;
           s.status = 'documento_subido';
@@ -1082,7 +1107,9 @@ async function handleApi(req, res, pathname, query) {
         // notarización de $25. El servidor decide el precio a partir de un
         // catálogo fijo (ver PRICE_CATALOG arriba); hoy solo existe un
         // producto real en el flujo de /app.
-        const item = PRICE_CATALOG[DEFAULT_PRICE_ITEM];
+        // Incluye firmantes adicionales (ver priceForSession): $25 base,
+        // $50 si firman dos personas.
+        const item = priceForSession(s);
         const amountCents = item.amountCents;
         const origin = trustedOrigin(req);
         try {
