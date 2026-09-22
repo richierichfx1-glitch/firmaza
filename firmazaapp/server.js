@@ -232,6 +232,50 @@ async function getClientFromRequest(req) {
 }
 
 // ---------------------------------------------------------------------------
+// Dueño de una sesión de notarización (/api/sessions/:id/*). Antes, conocer
+// el id de una sesión (64 bits al azar — infactible de adivinar a ciegas,
+// pero sí filtrable por otros medios: el historial del navegador en un
+// equipo compartido, una captura de pantalla, un salto de referrer) bastaba
+// para hacer CUALQUIER cosa con ella sin haberla creado: leer los datos del
+// firmante, reemplazar el documento, forzar /confirm-payment, disparar
+// /notarize. La sesión no necesita cuenta (Firmaza permite notarizar sin
+// registrarse), así que no se puede exigir aquí el login de cliente — en su
+// lugar, el propio servidor le da al navegador que CREA la sesión una
+// cookie httpOnly con un token al azar (independiente por sesión, nunca
+// viaja en el cuerpo JSON de ninguna respuesta — ver la nota en
+// lib/db.js#getSessionOwnerToken), scoped con Path a esa sesión específica.
+// Cualquier sub-ruta que muta la sesión exige que esa cookie coincida con
+// lo que el servidor guardó.
+const SESSION_OWNER_COOKIE_PREFIX = 'firmaza_sowner_';
+const SESSION_OWNER_MAX_AGE = 60 * 60 * 24 * 3; // 3 días: de sobra para completar el trámite o retomarlo, sin dejar la cookie viva para siempre.
+function sessionOwnerCookieName(id) {
+  return `${SESSION_OWNER_COOKIE_PREFIX}${id}`;
+}
+function sessionOwnerCookieHeader(req, id, token) {
+  const parts = [
+    `${sessionOwnerCookieName(id)}=${token}`,
+    'HttpOnly',
+    `Path=/api/sessions/${id}`,
+    `Max-Age=${SESSION_OWNER_MAX_AGE}`,
+    'SameSite=Lax',
+  ];
+  if (isHttps(req)) parts.push('Secure');
+  return parts.join('; ');
+}
+// Sesiones creadas ANTES de este arreglo no tienen owner_token guardado
+// (columna nueva, nula en filas viejas) — ahí se deja pasar sin exigir la
+// cookie, para no dejar a alguien a mitad de su trámite sin poder
+// continuar justo en el momento del despliegue. Toda sesión NUEVA desde
+// ahora sí queda protegida.
+async function verifySessionOwnership(req, id) {
+  const expected = await db.getSessionOwnerToken(id);
+  if (!expected) return true;
+  const cookies = parseCookies(req);
+  const provided = cookies[sessionOwnerCookieName(id)];
+  return !!provided && timingSafeStringEqual(provided, expected);
+}
+
+// ---------------------------------------------------------------------------
 // Acceso del panel de notario (/notario). Antes de esto, /api/queue y
 // /api/sessions/:id/claim no tenían ningún control de acceso: cualquiera que
 // visitara /notario (o llamara a esas rutas directo) podía ver la cola
@@ -771,7 +815,12 @@ async function handleApi(req, res, pathname, query) {
       history: [{ event: 'sesion_creada', at: new Date().toISOString() }],
     };
     await db.saveSession(s);
-    return send(res, 200, { session: s });
+    // Ver la nota junto a verifySessionOwnership() más arriba: este token es
+    // lo único que distingue, de aquí en adelante, a quien creó la sesión de
+    // cualquier otra persona que llegue a conocer su id.
+    const ownerToken = crypto.randomBytes(24).toString('hex');
+    await db.setSessionOwnerToken(id, ownerToken);
+    return send(res, 200, { session: s }, { 'Set-Cookie': sessionOwnerCookieHeader(req, id, ownerToken) });
   }
 
   const sessionMatch = pathname.match(/^\/api\/sessions\/([a-f0-9]+)(\/.*)?$/);
@@ -786,6 +835,9 @@ async function handleApi(req, res, pathname, query) {
     if (sub === '' && req.method === 'GET') {
       const s = await db.getSession(id);
       if (!s) return send(res, 404, { error: 'Sesión no encontrada' });
+      if (!(await verifySessionOwnership(req, id))) {
+        return send(res, 403, { error: 'No autorizado para ver esta sesión.' });
+      }
       return send(res, 200, { session: s });
     }
 
@@ -799,6 +851,15 @@ async function handleApi(req, res, pathname, query) {
     return db.withSessionLock(id, async (txn) => {
       const s = await txn.getSession();
       if (!s) return send(res, 404, { error: 'Sesión no encontrada' });
+
+      // /claim lo usa el NOTARIO, no el firmante dueño de la sesión — un
+      // notario nunca tiene (ni debe tener) la cookie de dueño de la sesión
+      // que está tomando de la cola. Su propio control de acceso es
+      // isNotaryAuthenticated() más abajo, así que /claim se salta esta
+      // verificación a propósito.
+      if (sub !== '/claim' && !(await verifySessionOwnership(req, id))) {
+        return send(res, 403, { error: 'No autorizado para modificar esta sesión.' });
+      }
 
       if (sub === '/upload' && req.method === 'POST') {
         if (documentLocked(s)) {

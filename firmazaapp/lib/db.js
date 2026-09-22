@@ -93,6 +93,13 @@ async function migrate() {
     );
     CREATE INDEX IF NOT EXISTS idx_sessions_email ON sessions ((lower(email)));
     CREATE INDEX IF NOT EXISTS idx_magic_links_email ON magic_links ((lower(email)));
+    -- owner_token: ver setSessionOwnerToken()/getSessionOwnerToken() más abajo.
+    -- ALTER ... IF NOT EXISTS (en vez de agregarla a la CREATE TABLE de arriba)
+    -- porque esa CREATE TABLE tiene IF NOT EXISTS: en una base ya existente no
+    -- se vuelve a ejecutar, así que la única forma de que las sesiones que ya
+    -- existen (creadas por un despliegue anterior) reciban la columna nueva es
+    -- con un ALTER TABLE explícito.
+    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS owner_token TEXT;
   `);
 }
 
@@ -122,6 +129,31 @@ function rowToSession(r) {
 async function getSession(id, client) {
   const { rows } = await query('SELECT * FROM sessions WHERE id = $1', [id], client);
   return rowToSession(rows[0]);
+}
+
+// El token de "dueño" de una sesión (ver verifySessionOwnership() en
+// server.js) se mantiene TOTALMENTE aparte del objeto de sesión que
+// getSession()/rowToSession() devuelven, a propósito: ese objeto es
+// exactamente lo que server.js manda de vuelta al navegador en cada
+// respuesta (`send(res, 200, { session: s })`) — si el token viviera ahí,
+// bastaría con conocer el id de la sesión (que sí puede filtrarse por otros
+// medios) para pedir el estado de la sesión y recibir de regalo el propio
+// secreto que se supone protege las mutaciones. getSessionOwnerToken() es
+// la única forma de leerlo, y solo server.js la usa, nunca para construir
+// una respuesta.
+async function getSessionOwnerToken(id, client) {
+  const { rows } = await query('SELECT owner_token FROM sessions WHERE id = $1', [id], client);
+  return rows[0]?.owner_token || null;
+}
+
+// Se llama una sola vez, justo después de crear una sesión nueva. El
+// "WHERE owner_token IS NULL" no es solo defensivo: dejar el token fijo
+// desde la creación (y nunca reescribible después) es lo que lo hace útil
+// como prueba de "quién la creó" — si cualquier ruta pudiera reemplazarlo
+// más adelante, alguien que ya hubiera perdido el control de la sesión
+// podría, en teoría, "recuperarla" con un segundo POST.
+async function setSessionOwnerToken(id, token, client) {
+  await query('UPDATE sessions SET owner_token = $2 WHERE id = $1 AND owner_token IS NULL', [id, token], client);
 }
 
 async function getSessionsByEmail(email) {
@@ -359,6 +391,8 @@ module.exports = {
   getSessionByProofTransactionId,
   saveSession,
   withSessionLock,
+  getSessionOwnerToken,
+  setSessionOwnerToken,
   // clientes
   getClientByEmail,
   createClientIfMissing,
