@@ -79,7 +79,7 @@ const ALWAYS_BILINGUAL = new Set(['consentimiento_viaje_menor']);
 // fechas y "Ciudad y estado donde se firma" (lugares de EE.UU.) NO se traducen.
 const TRANSLATABLE = {
   carta_poder_simple: ['poderdanteId', 'apoderadoId', 'alcance'],
-  consentimiento_viaje_menor: ['padreId', 'destino'],
+  consentimiento_viaje_menor: ['padreId', 'menorId', 'acompananteId', 'acompananteParentesco', 'destino', 'hospedaje'],
   declaracion_jurada_generica: ['declaranteId', 'declaracion'],
   carta_propia: ['titulo', 'cuerpo'],
 };
@@ -88,7 +88,7 @@ const TRANSLATABLE = {
 // quedarse con la versión en inglés.
 const REVIEW_FIELDS = {
   carta_poder_simple: [['alcance', 'Para qué autorizas']],
-  consentimiento_viaje_menor: [['destino', 'Destino del viaje']],
+  consentimiento_viaje_menor: [['destino', 'Destino del viaje'], ['hospedaje', 'Dónde se hospedará el menor'], ['acompananteParentesco', 'Parentesco del acompañante']],
   declaracion_jurada_generica: [['declaracion', 'Lo que declaras bajo juramento']],
   carta_propia: [['titulo', 'Título de la carta'], ['cuerpo', 'Texto de tu carta']],
 };
@@ -212,14 +212,38 @@ const TEMPLATES = [
     id: 'consentimiento_viaje_menor',
     name: 'Carta de consentimiento de viaje para menores',
     description: 'Para cuando un menor viaja sin uno o ambos padres/tutores.',
+    // Aviso informativo que se muestra arriba del formulario (no va en el PDF).
+    // No es asesoría legal: solo avisa que el país de destino puede pedir más.
+    notice:
+      'Si vas a usar esta carta en otro país, es posible que necesites apostillarla en la ' +
+      'Secretaría de Estado del estado donde se notariza (Firmaza no hace ese trámite). Si el ' +
+      'menor sale de México sin uno de sus padres o con otra persona, México también pide el ' +
+      'Formato SAM del INM. Verifica los requisitos con la aerolínea y con el consulado del país ' +
+      'de destino antes de viajar.',
     fields: [
       { key: 'menorNombre', label: 'Nombre completo del menor', type: 'text', required: true, placeholder: 'Ej. Sofía Ramírez López' },
       { key: 'menorNacimiento', label: 'Fecha de nacimiento del menor', type: 'date', required: true },
-      { key: 'padreNombre', label: 'Tu nombre completo (padre/madre/tutor que firma)', type: 'text', required: true, placeholder: 'Ej. Ricardo Vivas Barrios' },
+      { key: 'menorId', label: 'Pasaporte del menor (país y número)', type: 'text', required: false, placeholder: 'Ej. Pasaporte mexicano #G98765432' },
+      { key: 'padreNombre', label: 'Tu nombre completo (quien firma)', type: 'text', required: true, placeholder: 'Ej. Ricardo Vivas Barrios' },
+      {
+        key: 'padreParentesco', label: 'Tu parentesco con el menor', type: 'select', required: true,
+        options: [
+          { value: 'madre', label: 'Madre' },
+          { value: 'padre', label: 'Padre' },
+          { value: 'tutor', label: 'Tutor(a) legal' },
+        ],
+      },
       { key: 'padreId', label: 'Tu identificación (tipo y número)', type: 'text', required: true, placeholder: 'Ej. Pasaporte 123456789' },
-      { key: 'padreAusenteNombre', label: 'Nombre del otro padre/tutor (si no viaja ni firma esta carta)', type: 'text', required: false, placeholder: 'Ej. Ana Ramírez Torres' },
+      { key: 'padreTelefono', label: 'Tu teléfono (para que puedan confirmar este permiso)', type: 'text', required: true, placeholder: 'Ej. (816) 555-0123' },
+      { key: 'padreCorreo', label: 'Tu correo electrónico', type: 'text', required: false, placeholder: 'Ej. tucorreo@ejemplo.com' },
+      { key: 'padreDireccion', label: 'Tu dirección', type: 'text', required: false, placeholder: 'Ej. 123 Main St, Kansas City, MO 64111' },
+      { key: 'padreAusenteNombre', label: 'Nombre del otro padre/madre/tutor (si no viaja ni firma esta carta)', type: 'text', required: false, placeholder: 'Ej. Ana Ramírez Torres' },
       { key: 'acompananteNombre', label: 'Nombre del adulto que acompaña al menor (si aplica)', type: 'text', required: false, placeholder: 'Ej. Ana Lucía Vivas' },
+      { key: 'acompananteParentesco', label: 'Parentesco del acompañante con el menor', type: 'text', required: false, placeholder: 'Ej. Tía, abuelo, maestra' },
+      { key: 'acompananteId', label: 'Identificación del acompañante (tipo y número)', type: 'text', required: false, placeholder: 'Ej. Pasaporte 987654321' },
+      { key: 'acompananteTelefono', label: 'Teléfono del acompañante', type: 'text', required: false, placeholder: 'Ej. (913) 555-0199' },
       { key: 'destino', label: 'Destino del viaje', type: 'text', required: true, placeholder: 'Ej. Ciudad de México, México' },
+      { key: 'hospedaje', label: 'Dónde se hospedará el menor (dirección o lugar)', type: 'text', required: false, placeholder: 'Ej. Casa de su abuela, Av. Juárez 45, Guadalajara, Jalisco' },
       { key: 'fechaSalida', label: 'Fecha de salida', type: 'date', required: true },
       { key: 'fechaRegreso', label: 'Fecha de regreso', type: 'date', required: true },
       { key: 'lugar', label: 'Ciudad y estado donde se firma', type: 'text', required: true, placeholder: 'Ej. Kansas City, Missouri' },
@@ -228,42 +252,77 @@ const TEMPLATES = [
     // justo debajo, el mismo párrafo en español. El `lang` se ignora.
     render(v, { tr = {} } = {}) {
       const e = englishValues(v, tr);
-      const pair = (en, esText, after = 14) => [
-        { text: en, spaceAfter: 4 },
-        { text: esText, spaceAfter: after, gray: 0.25 },
+      const pair = (en, esText, after = 8) => [
+        { text: en, size: 10, spaceAfter: 3 },
+        { text: esText, size: 10, spaceAfter: after, gray: 0.25 },
       ];
+      // Documentos anteriores a este cambio no tienen parentesco: se usa el
+      // texto genérico de antes.
+      const REL = {
+        madre: ['the mother', 'madre'],
+        padre: ['the father', 'padre'],
+        tutor: ['the legal guardian', 'tutor(a) legal'],
+      }[v.padreParentesco] || ['the parent/legal guardian', 'padre/madre/tutor legal'];
+      const passEn = v.menorId ? `, holder of ${e.menorId}` : '';
+      const passEs = v.menorId ? `, con ${v.menorId}` : '';
+
       const lines = [
         { text: 'MINOR TRAVEL CONSENT LETTER', size: 16, bold: true, align: 'center', spaceAfter: 2 },
         { text: 'CARTA DE CONSENTIMIENTO DE VIAJE PARA MENORES', size: 13, bold: true, align: 'center', gray: 0.25, spaceAfter: 6 },
-        { text: '(English / Español — both versions have the same content / ambas versiones tienen el mismo contenido)', size: 8, align: 'center', gray: GRAY, spaceAfter: 22 },
+        { text: '(English / Español — both versions have the same content / ambas versiones tienen el mismo contenido)', size: 8, align: 'center', gray: GRAY, spaceAfter: 16 },
         ...pair(
-          `I, ${v.padreNombre}, identified by ${e.padreId}, as the parent/legal guardian of the minor ${v.menorNombre}, born on ${formatDate(v.menorNacimiento, 'en')}, hereby authorize the minor to travel to ${e.destino}, from ${formatDate(v.fechaSalida, 'en')} to ${formatDate(v.fechaRegreso, 'en')}.`,
-          `Yo, ${v.padreNombre}, identificado con ${v.padreId}, en calidad de padre/madre/tutor legal del menor ${v.menorNombre}, nacido el ${formatDate(v.menorNacimiento, 'es')}, autorizo por medio de la presente a que viaje a ${v.destino}, del ${formatDate(v.fechaSalida, 'es')} al ${formatDate(v.fechaRegreso, 'es')}.`,
+          `I, ${v.padreNombre}, identified by ${e.padreId}, as ${REL[0]} of the minor ${v.menorNombre}, born on ${formatDate(v.menorNacimiento, 'en')}${passEn}, hereby authorize the minor to travel to ${e.destino}, from ${formatDate(v.fechaSalida, 'en')} to ${formatDate(v.fechaRegreso, 'en')}.`,
+          `Yo, ${v.padreNombre}, identificado(a) con ${v.padreId}, en calidad de ${REL[1]} del menor ${v.menorNombre}, nacido(a) el ${formatDate(v.menorNacimiento, 'es')}${passEs}, autorizo por medio de la presente a que viaje a ${v.destino}, del ${formatDate(v.fechaSalida, 'es')} al ${formatDate(v.fechaRegreso, 'es')}.`,
         ),
       ];
+
       if (v.acompananteNombre) {
+        const relEn = v.acompananteParentesco ? `, the minor's ${e.acompananteParentesco.toLowerCase()}` : '';
+        const relEs = v.acompananteParentesco ? ` (${v.acompananteParentesco.toLowerCase()} del menor)` : '';
+        const idEn = v.acompananteId ? `, identified by ${e.acompananteId}` : '';
+        const idEs = v.acompananteId ? `, identificado(a) con ${v.acompananteId}` : '';
+        const telEn = v.acompananteTelefono ? `, phone ${v.acompananteTelefono}` : '';
+        const telEs = v.acompananteTelefono ? `, teléfono ${v.acompananteTelefono}` : '';
         lines.push(...pair(
-          `The minor will travel accompanied by ${v.acompananteNombre}.`,
-          `El menor viajará acompañado de ${v.acompananteNombre}.`,
+          `The minor will travel accompanied by ${v.acompananteNombre}${relEn}${idEn}${telEn}.`,
+          `El menor viajará acompañado(a) de ${v.acompananteNombre}${relEs}${idEs}${telEs}.`,
+        ));
+      }
+      if (v.hospedaje) {
+        lines.push(...pair(
+          `During the trip, the minor will stay at: ${e.hospedaje}.`,
+          `Durante el viaje, el menor se hospedará en: ${v.hospedaje}.`,
         ));
       }
       if (v.padreAusenteNombre) {
         lines.push(...pair(
           `The minor's other parent/guardian, ${v.padreAusenteNombre}, is not traveling and is not signing this letter.`,
-          `El otro padre/tutor del menor, ${v.padreAusenteNombre}, no viaja ni firma esta carta.`,
+          `El otro padre/madre/tutor del menor, ${v.padreAusenteNombre}, no viaja ni firma esta carta.`,
         ));
       }
+
+      // Datos de contacto de quien firma, para que la autoridad o la
+      // aerolínea puedan confirmar el permiso.
+      const contactEn = [v.padreTelefono && `phone ${v.padreTelefono}`, v.padreCorreo && `email ${v.padreCorreo}`].filter(Boolean).join(', ');
+      const contactEs = [v.padreTelefono && `teléfono ${v.padreTelefono}`, v.padreCorreo && `correo ${v.padreCorreo}`].filter(Boolean).join(', ');
+      if (contactEn || v.padreDireccion) {
+        lines.push(...pair(
+          `To confirm this authorization, I can be contacted at: ${contactEn}${v.padreDireccion ? `${contactEn ? '; ' : ''}address ${v.padreDireccion}` : ''}.`,
+          `Para confirmar esta autorización, pueden contactarme a: ${contactEs}${v.padreDireccion ? `${contactEs ? '; ' : ''}dirección ${v.padreDireccion}` : ''}.`,
+        ));
+      }
+
       lines.push(
         ...pair(
           'I declare that this authorization is given voluntarily and that the information provided herein is true.',
           'Declaro que esta autorización es voluntaria y que la información aquí proporcionada es verdadera.',
-          24,
+          18,
         ),
-        { text: SIGN_DATE_EN(v.lugar), spaceAfter: 4 },
-        { text: SIGN_DATE_ES(v.lugar), spaceAfter: 40, gray: 0.25 },
+        { text: SIGN_DATE_EN(v.lugar), size: 10, spaceAfter: 3 },
+        { text: SIGN_DATE_ES(v.lugar), size: 10, spaceAfter: 30, gray: 0.25 },
         { text: '_______________________________', spaceAfter: 2 },
-        { text: `${v.padreNombre} — Signature / Firma`, size: 9, spaceAfter: 40 },
-        { text: LEGAL_DISCLAIMER_EN, size: 8, spaceBefore: 20, spaceAfter: 6 },
+        { text: `${v.padreNombre} — Signature / Firma`, size: 9, spaceAfter: 12 },
+        { text: LEGAL_DISCLAIMER_EN, size: 8, spaceBefore: 6, spaceAfter: 6 },
         { text: `${LEGAL_DISCLAIMER} ${TRANSLATION_NOTE_ES}`, size: 8, gray: GRAY },
       );
       return lines;
@@ -310,8 +369,8 @@ function getTemplate(id) {
 }
 
 function listTemplates() {
-  return TEMPLATES.map(({ id, name, description, fields }) => ({
-    id, name, description, fields,
+  return TEMPLATES.map(({ id, name, description, fields, notice }) => ({
+    id, name, description, fields, notice: notice || null,
     // Para que la vista previa sepa si hay selector de idioma o no.
     alwaysBilingual: ALWAYS_BILINGUAL.has(id),
   }));
@@ -324,7 +383,10 @@ function listTemplates() {
 function validateValues(template, values) {
   const missing = [];
   for (const f of template.fields) {
-    if (f.required && !String(values?.[f.key] || '').trim()) {
+    const val = String(values?.[f.key] || '').trim();
+    // Un <select> solo acepta sus opciones definidas (defensa del servidor).
+    const invalidOption = f.type === 'select' && val && !(f.options || []).some((o) => o.value === val);
+    if ((f.required && !val) || invalidOption) {
       missing.push({ key: f.key, label: f.label });
     }
   }

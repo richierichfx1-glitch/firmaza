@@ -246,12 +246,20 @@ function renderTemplateFields() {
   const t = templates.find((x) => x.id === selectedTemplateId);
   const container = $('#templateFields');
   if (!t) { container.innerHTML = ''; return; }
-  container.innerHTML = t.fields.map((f) => {
+  // Aviso informativo de la plantilla (p. ej. apostilla en el permiso de viaje).
+  const notice = t.notice ? `<div class="template-notice">ℹ️ ${escapeHtml(t.notice)}</div>` : '';
+  container.innerHTML = notice + t.fields.map((f) => {
     const req = f.required ? '' : ' <span class="hint" style="display:inline">(opcional)</span>';
     const ph = f.placeholder ? ` placeholder="${f.placeholder.replace(/"/g, '&quot;')}"` : '';
-    const inner = f.type === 'textarea'
-      ? `<textarea rows="4" data-fkey="${f.key}"${ph}></textarea>`
-      : `<input type="${f.type === 'date' ? 'date' : 'text'}" data-fkey="${f.key}"${ph}>`;
+    let inner;
+    if (f.type === 'textarea') {
+      inner = `<textarea rows="4" data-fkey="${f.key}"${ph}></textarea>`;
+    } else if (f.type === 'select') {
+      inner = `<select data-fkey="${f.key}"><option value="">Elige una opción</option>${
+        (f.options || []).map((o) => `<option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</option>`).join('')}</select>`;
+    } else {
+      inner = `<input type="${f.type === 'date' ? 'date' : 'text'}" data-fkey="${f.key}"${ph}>`;
+    }
     return `<div class="field" data-field-wrap="${f.key}"><label>${f.label}${req}</label>${inner}<span class="field-error" data-err-for="${f.key}"></span></div>`;
   }).join('');
 }
