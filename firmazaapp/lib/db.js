@@ -35,8 +35,11 @@ function getPool() {
   return pool;
 }
 
-async function query(text, params) {
-  return getPool().query(text, params);
+// `client`, cuando se pasa, es un cliente de conexión ya sacado del pool
+// (dentro de una transacción — ver withSessionLock más abajo). Cuando se
+// omite, cada llamada toma cualquier conexión libre del pool, como antes.
+async function query(text, params, client) {
+  return (client || getPool()).query(text, params);
 }
 
 // ---------------------------------------------------------------------------
@@ -116,8 +119,8 @@ function rowToSession(r) {
   };
 }
 
-async function getSession(id) {
-  const { rows } = await query('SELECT * FROM sessions WHERE id = $1', [id]);
+async function getSession(id, client) {
+  const { rows } = await query('SELECT * FROM sessions WHERE id = $1', [id], client);
   return rowToSession(rows[0]);
 }
 
@@ -138,7 +141,18 @@ async function getSessionByProofTransactionId(transactionId) {
 
 // Crea o actualiza (upsert) una sesión completa. Se llama después de mutar
 // el objeto de sesión en memoria, igual que antes se llamaba saveSessions().
-async function saveSession(s) {
+//
+// IMPORTANTE — esto reemplaza la fila COMPLETA con el snapshot en memoria
+// que trae `s`. getSession()+mutar+saveSession() es un patrón de
+// leer-modificar-guardar clásico: si dos peticiones hacen esa secuencia casi
+// al mismo tiempo para la MISMA sesión (p. ej. un doble clic en "pagar", que
+// crea dos órdenes de Square casi simultáneas), ambas leen el mismo estado
+// inicial y la segunda en terminar de escribir pisa en silencio los cambios
+// de la primera — se puede perder un orderId, una firma, un cambio de
+// estado, etc. sin ningún error visible. Por eso casi ningún llamador debe
+// usar esta función directamente: deben pasar por withSessionLock() (ver
+// abajo), que serializa el ciclo completo leer-modificar-guardar por sesión.
+async function saveSession(s, client) {
   await query(
     `INSERT INTO sessions (id, created_at, signer_name, email, language, status, document, identity, payment, signature, notary_id, room_id, proof, history)
      VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12,$13::jsonb,$14::jsonb)
@@ -170,9 +184,53 @@ async function saveSession(s) {
       s.roomId || null,
       s.proof != null ? JSON.stringify(s.proof) : null,
       JSON.stringify(s.history || []),
-    ]
+    ],
+    client
   );
   return s;
+}
+
+// Serializa el ciclo leer-modificar-guardar de UNA sesión, para que dos
+// peticiones que mutan la misma sesión casi al mismo tiempo no se pisen. En
+// vez de un bloqueo a nivel de fila (que exigiría reestructurar cada ruta
+// para compartir una sola transacción de principio a fin, incluidas
+// llamadas lentas a Square/Proof.com), usa un advisory lock de Postgres
+// (pg_advisory_xact_lock) con una clave derivada del id de la sesión:
+// - Solo bloquea a otra petición que intente lo mismo con el MISMO id de
+//   sesión — peticiones sobre otras sesiones, y lecturas sueltas que no
+//   pasan por aquí (como el GET simple de una sesión), no se ven afectadas.
+// - El lock es "xact" (de transacción): se libera solo con COMMIT/ROLLBACK,
+//   así que no hace falta liberarlo a mano ni arriesgarse a dejarlo colgado
+//   si algo lanza una excepción a medio camino.
+// - `fn` recibe getSession/saveSession ya atados a esa misma conexión y
+//   transacción, para que la lectura de adentro vea el estado más reciente
+//   ya confirmado (no una copia vieja de antes del lock) y la escritura
+//   quede dentro de la misma transacción.
+//
+// Nota de costo: mientras `fn` esté corriendo (incluida cualquier llamada
+// de red lenta a Square/Proof.com que haga), esta conexión queda apartada
+// del pool y el lock sigue tomado — así que otra petición sobre la MISMA
+// sesión espera hasta que termine. Para el volumen de tráfico de Firmaza
+// esto es aceptable (es exactamente el caso — doble clic, reintentos — que
+// se quiere serializar); si el tráfico creciera mucho valdría la pena medir
+// el tamaño del pool de conexiones.
+async function withSessionLock(id, fn) {
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [id]);
+    const result = await fn({
+      getSession: () => getSession(id, client),
+      saveSession: (s) => saveSession(s, client),
+    });
+    await client.query('COMMIT');
+    return result;
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -300,6 +358,7 @@ module.exports = {
   getSessionsByStatuses,
   getSessionByProofTransactionId,
   saveSession,
+  withSessionLock,
   // clientes
   getClientByEmail,
   createClientIfMissing,

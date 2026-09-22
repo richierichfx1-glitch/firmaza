@@ -778,340 +778,356 @@ async function handleApi(req, res, pathname, query) {
   if (sessionMatch) {
     const id = sessionMatch[1];
     const sub = sessionMatch[2] || '';
-    const s = await db.getSession(id);
-    if (!s) return send(res, 404, { error: 'Sesión no encontrada' });
 
+    // El GET simple es de solo lectura — no pasa por withSessionLock() para
+    // no pagar el costo de una transacción/advisory lock en cada poll del
+    // estado de la sesión (el frontend hace polling de esto mientras
+    // espera al notario o a que Proof.com confirme la notarización).
     if (sub === '' && req.method === 'GET') {
+      const s = await db.getSession(id);
+      if (!s) return send(res, 404, { error: 'Sesión no encontrada' });
       return send(res, 200, { session: s });
     }
 
-    if (sub === '/upload' && req.method === 'POST') {
-      if (documentLocked(s)) {
-        return send(res, 409, { error: 'Esta sesión ya está pagada/notarizada — no se puede reemplazar el documento.' });
-      }
-      const body = await readBody(req);
-      if (!body.filename || !body.base64) return send(res, 400, { error: 'Falta filename o base64' });
-      const dataUriMatch = /^data:([^;]+);base64,/.exec(body.base64);
-      const contentType = sanitizeUploadContentType(dataUriMatch ? dataUriMatch[1] : guessContentType(body.filename));
-      const base64Data = body.base64.replace(/^data:.*;base64,/, '');
-      const safeName = `${id}-${Date.now()}-${body.filename.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
-      await db.saveFile(safeName, Buffer.from(base64Data, 'base64'), contentType);
-      s.document = { originalName: body.filename, storedAs: safeName, uploadedAt: new Date().toISOString() };
-      // El nombre/correo del firmante se capturan en este mismo paso del flujo
-      // (paso 0 en app.js); los guardamos aquí porque /api/sessions se crea
-      // antes de que el usuario los escriba.
-      if (body.signerName) s.signerName = body.signerName;
-      if (body.email) s.email = body.email;
-      s.status = 'documento_subido';
-      s.history.push({ event: 'documento_subido', at: new Date().toISOString() });
-      await db.saveSession(s);
-      return send(res, 200, { session: s });
-    }
+    // Todas las demás sub-rutas leen, modifican y guardan la sesión — se
+    // ejecutan dentro de withSessionLock() para que dos peticiones que
+    // mutan la MISMA sesión casi al mismo tiempo (doble clic en "pagar",
+    // el navegador reintentando una petición que en realidad sí llegó,
+    // un webhook de Proof.com cruzándose con el polling de /proof-status,
+    // etc.) no se pisen entre sí. Ver el comentario de withSessionLock()
+    // en lib/db.js para el porqué completo.
+    return db.withSessionLock(id, async (txn) => {
+      const s = await txn.getSession();
+      if (!s) return send(res, 404, { error: 'Sesión no encontrada' });
 
-    // Genera un documento PDF para el firmante (plantilla llenada por él
-    // mismo, o una carta cuyo texto completo escribió él) y lo deja como si
-    // lo hubiera subido — mismo estado/flujo que /upload de aquí en adelante.
-    // IMPORTANTE: Firmaza NUNCA decide el contenido legal aquí, solo lo
-    // acomoda en formato de documento — ver aviso en lib/documentTemplates.js.
-    if (sub === '/prepare-document' && req.method === 'POST') {
-      if (documentLocked(s)) {
-        return send(res, 409, { error: 'Esta sesión ya está pagada/notarizada — no se puede reemplazar el documento.' });
-      }
-      const body = await readBody(req);
-      let blocks, docTitle, templateId = null, inputs = null;
-      try {
-        if (body.mode === 'template') {
-          const template = docTemplates.getTemplate(body.templateId);
-          if (!template) return send(res, 400, { error: 'Plantilla no encontrada' });
-          const values = body.values || {};
-          const lengthError = fieldsWithinLimit(values);
-          if (lengthError) return send(res, 400, { error: lengthError });
-          const missing = docTemplates.validateValues(template, values);
-          if (missing.length) {
-            return send(res, 400, {
-              error: `Falta completar: ${missing.map((f) => f.label).join(', ')}`,
-              missingFields: missing,
-            });
-          }
-          blocks = template.render(values);
-          docTitle = template.name;
-          templateId = template.id;
-          // Guardamos los valores que el cliente escribió (no solo el PDF ya
-          // renderizado) para que más adelante pueda "reutilizar" este
-          // documento como base de uno nuevo con cambios ligeros — ver
-          // GET /api/cuenta/documentos/:id/reusar.
-          inputs = values;
-        } else if (body.mode === 'custom') {
-          const cuerpo = String(body.cuerpo || '').trim();
-          if (!cuerpo) return send(res, 400, { error: 'Escribe el texto de tu carta' });
-          const lengthError = fieldsWithinLimit({ titulo: body.titulo, cuerpo, lugar: body.lugar });
-          if (lengthError) return send(res, 400, { error: lengthError });
-          blocks = docTemplates.renderCustomLetter({
-            titulo: body.titulo,
-            cuerpo,
-            autor: s.signerName || body.autor || '',
-            lugar: body.lugar,
-          });
-          docTitle = body.titulo || 'Carta';
-          inputs = { titulo: body.titulo || '', cuerpo, lugar: body.lugar || '' };
-        } else {
-          return send(res, 400, { error: 'mode debe ser "template" o "custom"' });
+      if (sub === '/upload' && req.method === 'POST') {
+        if (documentLocked(s)) {
+          return send(res, 409, { error: 'Esta sesión ya está pagada/notarizada — no se puede reemplazar el documento.' });
         }
-        const pdfBuffer = renderPdf(blocks);
-        const safeName = `${id}-preparado-${Date.now()}.pdf`;
-        await db.saveFile(safeName, pdfBuffer, 'application/pdf');
-        s.document = {
-          originalName: `${docTitle}.pdf`,
-          storedAs: safeName,
-          uploadedAt: new Date().toISOString(),
-          preparedByFirmaza: true,
-          mode: body.mode,
-          templateId,
-          inputs,
-        };
+        const body = await readBody(req);
+        if (!body.filename || !body.base64) return send(res, 400, { error: 'Falta filename o base64' });
+        const dataUriMatch = /^data:([^;]+);base64,/.exec(body.base64);
+        const contentType = sanitizeUploadContentType(dataUriMatch ? dataUriMatch[1] : guessContentType(body.filename));
+        const base64Data = body.base64.replace(/^data:.*;base64,/, '');
+        const safeName = `${id}-${Date.now()}-${body.filename.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+        await db.saveFile(safeName, Buffer.from(base64Data, 'base64'), contentType);
+        s.document = { originalName: body.filename, storedAs: safeName, uploadedAt: new Date().toISOString() };
+        // El nombre/correo del firmante se capturan en este mismo paso del flujo
+        // (paso 0 en app.js); los guardamos aquí porque /api/sessions se crea
+        // antes de que el usuario los escriba.
         if (body.signerName) s.signerName = body.signerName;
         if (body.email) s.email = body.email;
         s.status = 'documento_subido';
-        s.history.push({ event: 'documento_preparado_por_firmaza', at: new Date().toISOString(), mode: body.mode, templateId });
-        await db.saveSession(s);
+        s.history.push({ event: 'documento_subido', at: new Date().toISOString() });
+        await txn.saveSession(s);
         return send(res, 200, { session: s });
-      } catch (e) {
-        return send(res, 500, { error: e.message });
       }
-    }
 
-    if (sub === '/verify' && req.method === 'POST') {
-      const body = await readBody(req);
-      const result = await runIdentityVerification(body);
-      s.identity = {
-        fullName: body.fullName || '',
-        idType: body.idType || '',
-        idLast4: (body.idNumber || '').slice(-4),
-        verifiedAt: new Date().toISOString(),
-        result,
-      };
-      s.status = 'identidad_verificada';
-      s.history.push({ event: 'identidad_verificada', at: new Date().toISOString(), result: result.mode });
-      await db.saveSession(s);
-      return send(res, 200, { session: s });
-    }
-
-    if (sub === '/checkout' && req.method === 'POST') {
-      // Ya pagada — no crear otro cargo, solo confirmar lo que ya hay.
-      // (Antes esta ruta no revisaba esto: un doble clic o un POST repetido
-      // podía generar más de un payment link/orden para la misma sesión.)
-      if (s.payment?.paidAt) {
-        return send(res, 200, { demo: s.payment.mode === 'demo', session: s });
-      }
-      await readBody(req); // se descarta a propósito — ver nota abajo sobre PRICE_CATALOG
-      // El monto y la descripción del cargo NUNCA deben venir del cliente:
-      // antes se tomaban directo de body.amount/body.description, así que
-      // cualquiera podía mandar {amount: 0.01} y pagar un centavo por una
-      // notarización de $25. El servidor decide el precio a partir de un
-      // catálogo fijo (ver PRICE_CATALOG arriba); hoy solo existe un
-      // producto real en el flujo de /app.
-      const item = PRICE_CATALOG[DEFAULT_PRICE_ITEM];
-      const amountCents = item.amountCents;
-      const origin = trustedOrigin(req);
-      try {
-        const result = await createSquarePaymentLink({
-          amountCents,
-          description: item.description,
-          redirectUrl: `${origin}/app#/pagar-exito/${id}`,
-        });
-        if (result.demo) {
-          s.payment = { mode: 'demo', amount: amountCents / 100, paidAt: new Date().toISOString() };
-          s.status = 'pagado_demo';
-          s.history.push({ event: 'pago_demo', at: new Date().toISOString() });
-          await db.saveSession(s);
-          return send(res, 200, { demo: true, session: s });
+      // Genera un documento PDF para el firmante (plantilla llenada por él
+      // mismo, o una carta cuyo texto completo escribió él) y lo deja como si
+      // lo hubiera subido — mismo estado/flujo que /upload de aquí en adelante.
+      // IMPORTANTE: Firmaza NUNCA decide el contenido legal aquí, solo lo
+      // acomoda en formato de documento — ver aviso en lib/documentTemplates.js.
+      if (sub === '/prepare-document' && req.method === 'POST') {
+        if (documentLocked(s)) {
+          return send(res, 409, { error: 'Esta sesión ya está pagada/notarizada — no se puede reemplazar el documento.' });
         }
-        // orderIds acumula TODAS las órdenes creadas para esta sesión (no
-        // solo la más reciente), para que /confirm-payment pueda reconocer
-        // un pago aunque haya sido en una orden anterior a la última creada
-        // — ver nota junto a /confirm-payment.
-        const priorOrderIds = s.payment?.orderIds || [];
-        s.payment = {
-          mode: 'square',
-          paymentLinkId: result.id,
-          orderId: result.orderId,
-          orderIds: [...priorOrderIds, result.orderId].filter(Boolean),
-          amount: amountCents / 100,
-        };
-        await db.saveSession(s);
-        return send(res, 200, { demo: false, url: result.url });
-      } catch (e) {
-        return send(res, 500, { error: e.message });
-      }
-    }
-
-    // Square redirige aquí (`redirectUrl` de arriba) cuando el firmante
-    // termina el checkout, así que el frontend llama esta ruta apenas
-    // detecta el regreso (#/pagar-exito/:id) para dejar la sesión marcada
-    // como pagada y poder seguir directo a /notarize.
-    //
-    // Ese regreso del navegador NO es prueba de pago por sí solo — cualquiera
-    // puede mandar un POST directo a esta ruta sin haber pagado nada. Por
-    // eso, antes de marcar la sesión como pagada, se confirma con la propia
-    // API de Square (Orders API) que la orden asociada de verdad quedó en
-    // estado COMPLETED. Ver verifySquareOrderPaid() arriba.
-    if (sub === '/confirm-payment' && req.method === 'POST') {
-      if (s.payment?.mode === 'demo') {
-        return send(res, 200, { session: s });
-      }
-      if (s.payment?.paidAt) {
-        // Ya se había verificado en una llamada anterior (p. ej. el
-        // firmante recargó la página de éxito) — no hace falta repetir la
-        // consulta a Square.
-        return send(res, 200, { session: s });
-      }
-      try {
-        const expectedAmountCents = s.payment?.amount != null ? Math.round(s.payment.amount * 100) : null;
-        // Revisa TODAS las órdenes creadas para esta sesión, no solo
-        // s.payment.orderId (la más reciente). Antes, si /checkout se
-        // llamaba dos veces (doble clic, reintento de red) se generaban dos
-        // órdenes de Square distintas y s.payment.orderId quedaba apuntando
-        // solo a la última; si el firmante había pagado la primera, esta
-        // ruta nunca lo encontraba y la sesión quedaba huérfana sin poder
-        // avanzar aunque sí se hubiera cobrado.
-        const orderIdsToCheck = (s.payment?.orderIds?.length ? s.payment.orderIds : [s.payment?.orderId]).filter(Boolean);
-        let verification = { paid: false, state: null };
-        for (const orderId of orderIdsToCheck) {
-          // Cada orden se revisa en su propio try/catch: antes, si
-          // verifySquareOrderPaid() lanzaba una excepción para UNA orden
-          // (p. ej. una orden vieja o inválida que Square ya no reconoce),
-          // el bucle completo abortaba con un 500 y ni siquiera se llegaba
-          // a revisar las demás órdenes de la sesión — pudiendo dejar sin
-          // detectar un pago real que sí estaba en una orden posterior.
-          try {
-            verification = await verifySquareOrderPaid(orderId, expectedAmountCents);
-          } catch (perOrderErr) {
-            console.error(`Error verificando la orden de Square ${orderId}:`, perOrderErr.message);
-            continue;
+        const body = await readBody(req);
+        let blocks, docTitle, templateId = null, inputs = null;
+        try {
+          if (body.mode === 'template') {
+            const template = docTemplates.getTemplate(body.templateId);
+            if (!template) return send(res, 400, { error: 'Plantilla no encontrada' });
+            const values = body.values || {};
+            const lengthError = fieldsWithinLimit(values);
+            if (lengthError) return send(res, 400, { error: lengthError });
+            const missing = docTemplates.validateValues(template, values);
+            if (missing.length) {
+              return send(res, 400, {
+                error: `Falta completar: ${missing.map((f) => f.label).join(', ')}`,
+                missingFields: missing,
+              });
+            }
+            blocks = template.render(values);
+            docTitle = template.name;
+            templateId = template.id;
+            // Guardamos los valores que el cliente escribió (no solo el PDF ya
+            // renderizado) para que más adelante pueda "reutilizar" este
+            // documento como base de uno nuevo con cambios ligeros — ver
+            // GET /api/cuenta/documentos/:id/reusar.
+            inputs = values;
+          } else if (body.mode === 'custom') {
+            const cuerpo = String(body.cuerpo || '').trim();
+            if (!cuerpo) return send(res, 400, { error: 'Escribe el texto de tu carta' });
+            const lengthError = fieldsWithinLimit({ titulo: body.titulo, cuerpo, lugar: body.lugar });
+            if (lengthError) return send(res, 400, { error: lengthError });
+            blocks = docTemplates.renderCustomLetter({
+              titulo: body.titulo,
+              cuerpo,
+              autor: s.signerName || body.autor || '',
+              lugar: body.lugar,
+            });
+            docTitle = body.titulo || 'Carta';
+            inputs = { titulo: body.titulo || '', cuerpo, lugar: body.lugar || '' };
+          } else {
+            return send(res, 400, { error: 'mode debe ser "template" o "custom"' });
           }
-          if (verification.paid) { s.payment = { ...(s.payment || {}), orderId }; break; }
+          const pdfBuffer = renderPdf(blocks);
+          const safeName = `${id}-preparado-${Date.now()}.pdf`;
+          await db.saveFile(safeName, pdfBuffer, 'application/pdf');
+          s.document = {
+            originalName: `${docTitle}.pdf`,
+            storedAs: safeName,
+            uploadedAt: new Date().toISOString(),
+            preparedByFirmaza: true,
+            mode: body.mode,
+            templateId,
+            inputs,
+          };
+          if (body.signerName) s.signerName = body.signerName;
+          if (body.email) s.email = body.email;
+          s.status = 'documento_subido';
+          s.history.push({ event: 'documento_preparado_por_firmaza', at: new Date().toISOString(), mode: body.mode, templateId });
+          await txn.saveSession(s);
+          return send(res, 200, { session: s });
+        } catch (e) {
+          return send(res, 500, { error: e.message });
         }
-        if (!verification.paid) {
-          return send(res, 402, {
-            error: 'Todavía no detectamos tu pago con Square. Si acabas de pagar, espera unos segundos e inténtalo de nuevo.',
-            state: verification.state || null,
-            session: s,
-          });
-        }
-        s.payment = { ...(s.payment || {}), mode: 'square', paidAt: new Date().toISOString() };
-        s.status = 'pagado_square';
-        s.history.push({ event: 'pago_square_confirmado', at: new Date().toISOString() });
-        await db.saveSession(s);
-        return send(res, 200, { session: s });
-      } catch (e) {
-        return send(res, 500, { error: e.message });
       }
-    }
 
-    if (sub === '/notarize' && req.method === 'POST') {
-      if (!s.document) return send(res, 400, { error: 'Primero hay que subir el documento' });
-      if (!s.email) return send(res, 400, { error: 'La sesión no tiene correo del firmante' });
-      // Sin esto, cualquiera con el id de una sesión (o creando una propia)
-      // podía llamar /notarize directo sin pasar por /checkout ni
-      // /confirm-payment, y eso crea una transacción real y de pago en
-      // Proof.com — es decir, notarizaciones gratis a costa de Firmaza.
-      if (!s.payment?.paidAt) {
-        return send(res, 402, { error: 'Esta sesión todavía no tiene un pago confirmado.' });
-      }
-      const origin = trustedOrigin(req);
-      const documentUrl = `${origin}/uploads/${s.document.storedAs}`;
-      try {
-        const result = await proofRon.createRonSession({
-          sessionId: id,
-          signerName: s.signerName,
-          signerEmail: s.email,
-          documentUrl,
-        });
-        if (!result) {
-          // Sin PROOF_API_KEY configurada: seguimos en modo demo (cola interna + WebRTC).
-          s.history.push({ event: 'notarize_modo_demo', at: new Date().toISOString() });
-          await db.saveSession(s);
-          return send(res, 200, { demo: true, session: s });
-        }
-        s.proof = {
-          transactionId: result.transactionId,
-          status: result.status,
-          createdAt: new Date().toISOString(),
+      if (sub === '/verify' && req.method === 'POST') {
+        const body = await readBody(req);
+        const result = await runIdentityVerification(body);
+        s.identity = {
+          fullName: body.fullName || '',
+          idType: body.idType || '',
+          idLast4: (body.idNumber || '').slice(-4),
+          verifiedAt: new Date().toISOString(),
+          result,
         };
-        s.status = 'enviado_a_notario_proof';
-        s.history.push({ event: 'enviado_a_proof', at: new Date().toISOString(), transactionId: result.transactionId });
-        await db.saveSession(s);
-        return send(res, 200, { demo: false, session: s });
-      } catch (e) {
-        return send(res, 500, { error: e.message });
+        s.status = 'identidad_verificada';
+        s.history.push({ event: 'identidad_verificada', at: new Date().toISOString(), result: result.mode });
+        await txn.saveSession(s);
+        return send(res, 200, { session: s });
       }
-    }
 
-    if (sub === '/proof-status' && req.method === 'GET') {
-      if (!s.proof || !s.proof.transactionId) return send(res, 404, { error: 'Esta sesión no tiene transacción de Proof.com' });
-      try {
-        const tx = await proofRon.getTransactionStatus(s.proof.transactionId);
-        s.proof.status = tx?.status || s.proof.status;
-        if (tx?.status === 'completed' || tx?.status === 'released') s.status = 'notarizacion_completada';
-        else if (tx?.status === 'declined') s.status = 'notarizacion_rechazada';
-        await db.saveSession(s);
-        return send(res, 200, { session: s, transaction: tx });
-      } catch (e) {
-        return send(res, 500, { error: e.message });
+      if (sub === '/checkout' && req.method === 'POST') {
+        // Ya pagada — no crear otro cargo, solo confirmar lo que ya hay.
+        // (Antes esta ruta no revisaba esto: un doble clic o un POST repetido
+        // podía generar más de un payment link/orden para la misma sesión.)
+        if (s.payment?.paidAt) {
+          return send(res, 200, { demo: s.payment.mode === 'demo', session: s });
+        }
+        await readBody(req); // se descarta a propósito — ver nota abajo sobre PRICE_CATALOG
+        // El monto y la descripción del cargo NUNCA deben venir del cliente:
+        // antes se tomaban directo de body.amount/body.description, así que
+        // cualquiera podía mandar {amount: 0.01} y pagar un centavo por una
+        // notarización de $25. El servidor decide el precio a partir de un
+        // catálogo fijo (ver PRICE_CATALOG arriba); hoy solo existe un
+        // producto real en el flujo de /app.
+        const item = PRICE_CATALOG[DEFAULT_PRICE_ITEM];
+        const amountCents = item.amountCents;
+        const origin = trustedOrigin(req);
+        try {
+          const result = await createSquarePaymentLink({
+            amountCents,
+            description: item.description,
+            redirectUrl: `${origin}/app#/pagar-exito/${id}`,
+          });
+          if (result.demo) {
+            s.payment = { mode: 'demo', amount: amountCents / 100, paidAt: new Date().toISOString() };
+            s.status = 'pagado_demo';
+            s.history.push({ event: 'pago_demo', at: new Date().toISOString() });
+            await txn.saveSession(s);
+            return send(res, 200, { demo: true, session: s });
+          }
+          // orderIds acumula TODAS las órdenes creadas para esta sesión (no
+          // solo la más reciente), para que /confirm-payment pueda reconocer
+          // un pago aunque haya sido en una orden anterior a la última creada
+          // — ver nota junto a /confirm-payment.
+          const priorOrderIds = s.payment?.orderIds || [];
+          s.payment = {
+            mode: 'square',
+            paymentLinkId: result.id,
+            orderId: result.orderId,
+            orderIds: [...priorOrderIds, result.orderId].filter(Boolean),
+            amount: amountCents / 100,
+          };
+          await txn.saveSession(s);
+          return send(res, 200, { demo: false, url: result.url });
+        } catch (e) {
+          return send(res, 500, { error: e.message });
+        }
       }
-    }
 
-    if (sub === '/claim' && req.method === 'POST') {
-      if (!isNotaryAuthenticated(req)) return send(res, 401, { error: 'No autenticado como notario' });
-      const body = await readBody(req);
-      s.notaryId = body.notaryId;
-      s.status = 'en_sesion_con_notario';
-      s.roomId = s.roomId || newId();
-      s.history.push({ event: 'notario_tomo_sesion', at: new Date().toISOString(), notaryId: body.notaryId });
-      await db.saveSession(s);
-      return send(res, 200, { session: s });
-    }
-
-    if (sub === '/sign' && req.method === 'POST') {
-      // Antes esta ruta no tenía NINGÚN candado de estado: se podía llamar
-      // en cualquier momento (sin haber pagado, sin haber sido notarizada)
-      // y, peor, se podía volver a llamar después de ya firmada,
-      // reemplazando la firma/PNG y el auditHash ya registrados — es decir,
-      // cualquiera con el id de la sesión (ver nota sobre IDOR en
-      // documentLocked) podía alterar el registro legal de la firma en
-      // cualquier momento, no solo leerlo. Ahora exige pago confirmado
-      // (igual que /notarize) y rechaza (409) si la sesión ya tiene firma.
-      if (!s.payment?.paidAt) {
-        return send(res, 402, { error: 'Esta sesión todavía no tiene un pago confirmado.' });
+      // Square redirige aquí (`redirectUrl` de arriba) cuando el firmante
+      // termina el checkout, así que el frontend llama esta ruta apenas
+      // detecta el regreso (#/pagar-exito/:id) para dejar la sesión marcada
+      // como pagada y poder seguir directo a /notarize.
+      //
+      // Ese regreso del navegador NO es prueba de pago por sí solo — cualquiera
+      // puede mandar un POST directo a esta ruta sin haber pagado nada. Por
+      // eso, antes de marcar la sesión como pagada, se confirma con la propia
+      // API de Square (Orders API) que la orden asociada de verdad quedó en
+      // estado COMPLETED. Ver verifySquareOrderPaid() arriba.
+      if (sub === '/confirm-payment' && req.method === 'POST') {
+        if (s.payment?.mode === 'demo') {
+          return send(res, 200, { session: s });
+        }
+        if (s.payment?.paidAt) {
+          // Ya se había verificado en una llamada anterior (p. ej. el
+          // firmante recargó la página de éxito) — no hace falta repetir la
+          // consulta a Square.
+          return send(res, 200, { session: s });
+        }
+        try {
+          const expectedAmountCents = s.payment?.amount != null ? Math.round(s.payment.amount * 100) : null;
+          // Revisa TODAS las órdenes creadas para esta sesión, no solo
+          // s.payment.orderId (la más reciente). Antes, si /checkout se
+          // llamaba dos veces (doble clic, reintento de red) se generaban dos
+          // órdenes de Square distintas y s.payment.orderId quedaba apuntando
+          // solo a la última; si el firmante había pagado la primera, esta
+          // ruta nunca lo encontraba y la sesión quedaba huérfana sin poder
+          // avanzar aunque sí se hubiera cobrado.
+          const orderIdsToCheck = (s.payment?.orderIds?.length ? s.payment.orderIds : [s.payment?.orderId]).filter(Boolean);
+          let verification = { paid: false, state: null };
+          for (const orderId of orderIdsToCheck) {
+            // Cada orden se revisa en su propio try/catch: antes, si
+            // verifySquareOrderPaid() lanzaba una excepción para UNA orden
+            // (p. ej. una orden vieja o inválida que Square ya no reconoce),
+            // el bucle completo abortaba con un 500 y ni siquiera se llegaba
+            // a revisar las demás órdenes de la sesión — pudiendo dejar sin
+            // detectar un pago real que sí estaba en una orden posterior.
+            try {
+              verification = await verifySquareOrderPaid(orderId, expectedAmountCents);
+            } catch (perOrderErr) {
+              console.error(`Error verificando la orden de Square ${orderId}:`, perOrderErr.message);
+              continue;
+            }
+            if (verification.paid) { s.payment = { ...(s.payment || {}), orderId }; break; }
+          }
+          if (!verification.paid) {
+            return send(res, 402, {
+              error: 'Todavía no detectamos tu pago con Square. Si acabas de pagar, espera unos segundos e inténtalo de nuevo.',
+              state: verification.state || null,
+              session: s,
+            });
+          }
+          s.payment = { ...(s.payment || {}), mode: 'square', paidAt: new Date().toISOString() };
+          s.status = 'pagado_square';
+          s.history.push({ event: 'pago_square_confirmado', at: new Date().toISOString() });
+          await txn.saveSession(s);
+          return send(res, 200, { session: s });
+        } catch (e) {
+          return send(res, 500, { error: e.message });
+        }
       }
-      if (s.signature) {
-        return send(res, 409, { error: 'Esta sesión ya tiene una firma registrada — no se puede reemplazar.' });
-      }
-      const body = await readBody(req);
-      if (!body.signaturePng) return send(res, 400, { error: 'Falta signaturePng' });
-      const safeName = `${id}-firma-${Date.now()}.png`;
-      await db.saveFile(safeName, Buffer.from(body.signaturePng.replace(/^data:.*;base64,/, ''), 'base64'), 'image/png');
-      const hash = crypto.createHash('sha256')
-        .update(JSON.stringify({ id, doc: s.document, at: Date.now() }))
-        .digest('hex');
-      // Detrás del proxy de Render, req.socket.remoteAddress es la IP
-      // interna del proxy, no la del firmante — para que el rastro de
-      // auditoría de la firma sea útil de verdad (y no falsificable) hay
-      // que leer x-forwarded-for con trustedClientIp() (ver su comentario).
-      const signerIp = trustedClientIp(req);
-      s.signature = {
-        storedAs: safeName,
-        signedAt: new Date().toISOString(),
-        ip: signerIp,
-        auditHash: hash,
-      };
-      s.status = 'firmado';
-      s.history.push({ event: 'documento_firmado', at: new Date().toISOString(), auditHash: hash });
-      await db.saveSession(s);
-      return send(res, 200, { session: s });
-    }
 
-    return send(res, 404, { error: 'Ruta no encontrada' });
+      if (sub === '/notarize' && req.method === 'POST') {
+        if (!s.document) return send(res, 400, { error: 'Primero hay que subir el documento' });
+        if (!s.email) return send(res, 400, { error: 'La sesión no tiene correo del firmante' });
+        // Sin esto, cualquiera con el id de una sesión (o creando una propia)
+        // podía llamar /notarize directo sin pasar por /checkout ni
+        // /confirm-payment, y eso crea una transacción real y de pago en
+        // Proof.com — es decir, notarizaciones gratis a costa de Firmaza.
+        if (!s.payment?.paidAt) {
+          return send(res, 402, { error: 'Esta sesión todavía no tiene un pago confirmado.' });
+        }
+        const origin = trustedOrigin(req);
+        const documentUrl = `${origin}/uploads/${s.document.storedAs}`;
+        try {
+          const result = await proofRon.createRonSession({
+            sessionId: id,
+            signerName: s.signerName,
+            signerEmail: s.email,
+            documentUrl,
+          });
+          if (!result) {
+            // Sin PROOF_API_KEY configurada: seguimos en modo demo (cola interna + WebRTC).
+            s.history.push({ event: 'notarize_modo_demo', at: new Date().toISOString() });
+            await txn.saveSession(s);
+            return send(res, 200, { demo: true, session: s });
+          }
+          s.proof = {
+            transactionId: result.transactionId,
+            status: result.status,
+            createdAt: new Date().toISOString(),
+          };
+          s.status = 'enviado_a_notario_proof';
+          s.history.push({ event: 'enviado_a_proof', at: new Date().toISOString(), transactionId: result.transactionId });
+          await txn.saveSession(s);
+          return send(res, 200, { demo: false, session: s });
+        } catch (e) {
+          return send(res, 500, { error: e.message });
+        }
+      }
+
+      if (sub === '/proof-status' && req.method === 'GET') {
+        if (!s.proof || !s.proof.transactionId) return send(res, 404, { error: 'Esta sesión no tiene transacción de Proof.com' });
+        try {
+          const tx = await proofRon.getTransactionStatus(s.proof.transactionId);
+          s.proof.status = tx?.status || s.proof.status;
+          if (tx?.status === 'completed' || tx?.status === 'released') s.status = 'notarizacion_completada';
+          else if (tx?.status === 'declined') s.status = 'notarizacion_rechazada';
+          await txn.saveSession(s);
+          return send(res, 200, { session: s, transaction: tx });
+        } catch (e) {
+          return send(res, 500, { error: e.message });
+        }
+      }
+
+      if (sub === '/claim' && req.method === 'POST') {
+        if (!isNotaryAuthenticated(req)) return send(res, 401, { error: 'No autenticado como notario' });
+        const body = await readBody(req);
+        s.notaryId = body.notaryId;
+        s.status = 'en_sesion_con_notario';
+        s.roomId = s.roomId || newId();
+        s.history.push({ event: 'notario_tomo_sesion', at: new Date().toISOString(), notaryId: body.notaryId });
+        await txn.saveSession(s);
+        return send(res, 200, { session: s });
+      }
+
+      if (sub === '/sign' && req.method === 'POST') {
+        // Antes esta ruta no tenía NINGÚN candado de estado: se podía llamar
+        // en cualquier momento (sin haber pagado, sin haber sido notarizada)
+        // y, peor, se podía volver a llamar después de ya firmada,
+        // reemplazando la firma/PNG y el auditHash ya registrados — es decir,
+        // cualquiera con el id de la sesión (ver nota sobre IDOR en
+        // documentLocked) podía alterar el registro legal de la firma en
+        // cualquier momento, no solo leerlo. Ahora exige pago confirmado
+        // (igual que /notarize) y rechaza (409) si la sesión ya tiene firma.
+        if (!s.payment?.paidAt) {
+          return send(res, 402, { error: 'Esta sesión todavía no tiene un pago confirmado.' });
+        }
+        if (s.signature) {
+          return send(res, 409, { error: 'Esta sesión ya tiene una firma registrada — no se puede reemplazar.' });
+        }
+        const body = await readBody(req);
+        if (!body.signaturePng) return send(res, 400, { error: 'Falta signaturePng' });
+        const safeName = `${id}-firma-${Date.now()}.png`;
+        await db.saveFile(safeName, Buffer.from(body.signaturePng.replace(/^data:.*;base64,/, ''), 'base64'), 'image/png');
+        const hash = crypto.createHash('sha256')
+          .update(JSON.stringify({ id, doc: s.document, at: Date.now() }))
+          .digest('hex');
+        // Detrás del proxy de Render, req.socket.remoteAddress es la IP
+        // interna del proxy, no la del firmante — para que el rastro de
+        // auditoría de la firma sea útil de verdad (y no falsificable) hay
+        // que leer x-forwarded-for con trustedClientIp() (ver su comentario).
+        const signerIp = trustedClientIp(req);
+        s.signature = {
+          storedAs: safeName,
+          signedAt: new Date().toISOString(),
+          ip: signerIp,
+          auditHash: hash,
+        };
+        s.status = 'firmado';
+        s.history.push({ event: 'documento_firmado', at: new Date().toISOString(), auditHash: hash });
+        await txn.saveSession(s);
+        return send(res, 200, { session: s });
+      }
+
+      return send(res, 404, { error: 'Ruta no encontrada' });
+    });
   }
 
   // Le dice al frontend si el pago va a ser un cargo real con Square o una
@@ -1231,21 +1247,32 @@ const server = http.createServer(async (req, res) => {
       const payload = JSON.parse(raw);
       const event = payload.event;
       const transactionId = payload.data?.transaction_id;
-      const match = await db.getSessionByProofTransactionId(transactionId);
-      if (match) {
-        match.proof.status = event;
-        match.proof.lastEventAt = new Date().toISOString();
-        if (event === 'transaction.completed' || event === 'transaction.released') {
-          match.status = 'notarizacion_completada';
-        } else if (event === 'transaction.declined' || event === 'transaction.canceled' || event === 'transaction.expired') {
-          match.status = 'notarizacion_rechazada';
-        } else if (event === 'transaction.meeting.requested' || event === 'transaction.meeting.created' || event === 'notary.signer_ready') {
-          match.status = 'en_reunion_con_notario';
-        } else if (event === 'transaction.sent_to_signer') {
-          match.status = 'enviado_a_notario_proof';
-        }
-        match.history.push({ event: `proof:${event}`, at: new Date().toISOString() });
-        await db.saveSession(match);
+      // Búsqueda inicial (sin lock) solo para encontrar el id de la sesión
+      // — la lectura/escritura real que importa pasa por withSessionLock()
+      // más abajo, con su propio getSession() ya adentro del lock: este
+      // webhook puede llegar casi al mismo tiempo que el propio firmante
+      // hace polling de /proof-status (que también consulta y guarda el
+      // mismo campo s.proof/s.status), así que sin el lock uno de los dos
+      // puede pisar en silencio el cambio del otro.
+      const found = await db.getSessionByProofTransactionId(transactionId);
+      if (found) {
+        await db.withSessionLock(found.id, async (txn) => {
+          const match = await txn.getSession();
+          if (!match) return;
+          match.proof.status = event;
+          match.proof.lastEventAt = new Date().toISOString();
+          if (event === 'transaction.completed' || event === 'transaction.released') {
+            match.status = 'notarizacion_completada';
+          } else if (event === 'transaction.declined' || event === 'transaction.canceled' || event === 'transaction.expired') {
+            match.status = 'notarizacion_rechazada';
+          } else if (event === 'transaction.meeting.requested' || event === 'transaction.meeting.created' || event === 'notary.signer_ready') {
+            match.status = 'en_reunion_con_notario';
+          } else if (event === 'transaction.sent_to_signer') {
+            match.status = 'enviado_a_notario_proof';
+          }
+          match.history.push({ event: `proof:${event}`, at: new Date().toISOString() });
+          await txn.saveSession(match);
+        });
       } else {
         console.warn(`Webhook de Proof.com para transacción sin sesión local: ${transactionId} (${event})`);
       }
