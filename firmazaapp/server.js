@@ -209,17 +209,25 @@ setInterval(() => {
 // cargo en Square NUNCA deben venir del cliente (antes /checkout confiaba
 // ciegamente en body.amount/body.description: cualquiera podía mandar
 // amount:0.01 y "pagar" un centavo por una notarización). El único producto
-// que hoy realmente se cobra desde el flujo de /app es el primer sello
-// notarial ($25, ver public/index.html #precios); se deja como catálogo
-// (en vez de una sola constante) para poder agregar sellos/testigos
+// que hoy realmente se cobra desde el flujo de /app es la notarización
+// online ($39, ver public/index.html #precios); se deja como catálogo (en
+// vez de una sola constante) para poder agregar sellos/testigos
 // adicionales el día que el checkout los soporte, sin reabrir este hueco.
+//
+// Precio base $39 (antes $25 — ese precio igualaba exactamente el costo
+// mayorista que cobra Proof.com por sesión vía Notarize Network, así que
+// cada transacción perdía dinero después de las comisiones de Square; ver
+// conversación con Ricardo sobre estrategia de precios). Los extras de
+// firmante/sello ($10/$15) también igualaban el costo mayorista de Proof.com
+// (additional signer $10, additional seal $15) sin ningún margen — se suben
+// a $15/$25 con el mismo margen proporcional que el precio base.
 const PRICE_CATALOG = {
-  primer_sello: { amountCents: 2500, description: 'Primer sello notarial — Firmaza' },
+  primer_sello: { amountCents: 3900, description: 'Notarización online — Firmaza' },
   // Mismos precios que public/index.html #precios. Cada firmante adicional
   // (p. ej. el otro padre/madre en el permiso de viaje) paga su firma y su
-  // propio sello: $10 + $15 = $25 más.
-  firmante_adicional: { amountCents: 1000, description: 'Firmante adicional' },
-  sello_adicional: { amountCents: 1500, description: 'Sello notarial adicional' },
+  // propio sello: $15 + $25 = $40 más.
+  firmante_adicional: { amountCents: 1500, description: 'Firmante adicional' },
+  sello_adicional: { amountCents: 2500, description: 'Sello notarial adicional' },
 };
 const DEFAULT_PRICE_ITEM = 'primer_sello';
 
@@ -1110,11 +1118,11 @@ async function handleApi(req, res, pathname, query) {
         // El monto y la descripción del cargo NUNCA deben venir del cliente:
         // antes se tomaban directo de body.amount/body.description, así que
         // cualquiera podía mandar {amount: 0.01} y pagar un centavo por una
-        // notarización de $25. El servidor decide el precio a partir de un
+        // notarización de $39. El servidor decide el precio a partir de un
         // catálogo fijo (ver PRICE_CATALOG arriba); hoy solo existe un
         // producto real en el flujo de /app.
-        // Incluye firmantes adicionales (ver priceForSession): $25 base,
-        // $50 si firman dos personas.
+        // Incluye firmantes adicionales (ver priceForSession): $39 base,
+        // $79 si firman dos personas.
         const item = priceForSession(s);
         const amountCents = item.amountCents;
         const origin = trustedOrigin(req);
