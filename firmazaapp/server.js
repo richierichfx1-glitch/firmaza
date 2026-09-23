@@ -41,7 +41,8 @@
  *   GET  /api/sessions/:id/proof-status -> consulta el estado de la transacción en Proof.com
  *   POST /api/rtc/:room/signal      -> señalización WebRTC (oferta/respuesta/ICE)
  *   GET  /api/rtc/:room/signal      -> long-poll de señales pendientes
- *   POST /webhooks/proof            -> recibe eventos de Proof.com (transacción actualizada)
+ *   POST /webhooks/proof            -> recibe eventos de Proof.com (transacción actualizada; declined/expired disparan reembolso automático — ver refundSessionIfEligible)
+ *   POST /admin/sessions/:id/refund -> reembolso manual protegido con ADMIN_SECRET, para casos que no califican para el reembolso automático (ej. 'canceled')
  *   POST /admin/register-proof-webhook -> registra la suscripción de webhooks v2 en Proof.com (una vez, protegido con ADMIN_SECRET)
  *   GET  /admin/list-proof-webhooks    -> lista las suscripciones de webhooks ya registradas en Proof.com (protegido con ADMIN_SECRET)
  *   GET  /uploads/:id               -> sirve un archivo guardado en la base de datos (documento/firma)
@@ -592,12 +593,20 @@ function serveStatic(req, res, filePath) {
 // Location ID. Sin esas variables, el checkout queda en modo demo.
 // Docs: https://developer.squareup.com/docs/checkout-api/overview
 // ---------------------------------------------------------------------------
+// Host de la API de Square según el ambiente configurado — antes esta misma
+// línea (SQUARE_ENV === 'production' ? ... : ...) estaba repetida en cada
+// función que llamaba a Square; con el reembolso automático se iba a repetir
+// una cuarta vez, así que se saca a una sola función.
+function squareApiHost() {
+  return process.env.SQUARE_ENV === 'production' ? 'connect.squareup.com' : 'connect.squareupsandbox.com';
+}
+
 async function createSquarePaymentLink({ amountCents, description, redirectUrl }) {
   const token = process.env.SQUARE_ACCESS_TOKEN;
   const locationId = process.env.SQUARE_LOCATION_ID;
   if (!token || !locationId) return { demo: true };
 
-  const env = process.env.SQUARE_ENV === 'production' ? 'connect.squareup.com' : 'connect.squareupsandbox.com';
+  const env = squareApiHost();
   const resp = await fetch(`https://${env}/v2/online-checkout/payment-links`, {
     method: 'POST',
     signal: AbortSignal.timeout(15000),
@@ -631,7 +640,7 @@ async function createSquarePaymentLink({ amountCents, description, redirectUrl }
 async function verifySquareOrderPaid(orderId, expectedAmountCents) {
   const token = process.env.SQUARE_ACCESS_TOKEN;
   if (!token || !orderId) return { paid: false, reason: 'sin_order_id' };
-  const env = process.env.SQUARE_ENV === 'production' ? 'connect.squareup.com' : 'connect.squareupsandbox.com';
+  const env = squareApiHost();
   const resp = await fetch(`https://${env}/v2/orders/${orderId}`, {
     signal: AbortSignal.timeout(15000),
     headers: { Authorization: `Bearer ${token}`, 'Square-Version': '2024-08-21' },
@@ -645,6 +654,187 @@ async function verifySquareOrderPaid(orderId, expectedAmountCents) {
   // evita confiar ciegamente si algún día el monto se vuelve variable.
   const amountOk = !expectedAmountCents || order?.total_money?.amount === expectedAmountCents;
   return { paid: paid && amountOk, state: order?.state, order };
+}
+
+// El Refunds API de Square pide un payment_id, no un order_id — hay que
+// sacarlo de order.tenders (lo que se usó para pagar la orden). Cada tender
+// trae `payment_id` (poblado cuando se pagó vía la API de Payments v2, que es
+// como cobra el checkout de Payment Links que usa createSquarePaymentLink) y
+// también `id` (el id propio del tender, que en tenders más viejos coincide
+// con el id del pago) — se prueban ambos por si acaso, empezando por el más
+// específico.
+function extractSquarePaymentId(order) {
+  const tender = order?.tenders?.[0];
+  return tender?.payment_id || tender?.id || null;
+}
+
+// Reembolsa (total o parcial) un pago ya confirmado de Square.
+// Docs: https://developer.squareup.com/reference/square/refunds-api/refund-payment
+// `idempotencyKey` debe ser estable por reembolso (no aleatorio) para que,
+// si esta función se llama dos veces para el mismo caso (reintento de red,
+// el webhook de Proof.com llegando más de una vez, etc.), Square reconozca
+// la segunda llamada como la MISMA solicitud en vez de cobrar... perdón,
+// devolver el dinero dos veces.
+async function refundSquarePayment({ paymentId, amountCents, reason, idempotencyKey }) {
+  const token = process.env.SQUARE_ACCESS_TOKEN;
+  if (!token) return { demo: true };
+  if (!paymentId) throw new Error('Falta el payment_id de Square para poder reembolsar.');
+  const env = squareApiHost();
+  const resp = await fetch(`https://${env}/v2/refunds`, {
+    method: 'POST',
+    signal: AbortSignal.timeout(15000),
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'Square-Version': '2024-08-21',
+    },
+    body: JSON.stringify({
+      idempotency_key: idempotencyKey,
+      payment_id: paymentId,
+      amount_money: { amount: amountCents, currency: 'USD' },
+      reason: (reason || '').slice(0, 192), // Square limita "reason" a 192 caracteres
+    }),
+  });
+  const json = await resp.json();
+  if (!resp.ok) throw new Error(json.errors?.[0]?.detail || 'Error pidiendo el reembolso a Square');
+  return { demo: false, refundId: json.refund?.id, status: json.refund?.status };
+}
+
+// Texto legible por caso de reembolso automático — se usa tanto en el
+// historial de la sesión como en el correo al firmante.
+const REFUND_REASONS = {
+  declined: 'No fue posible verificar tu identidad con el notario (control de seguridad de Proof.com no superado)',
+  expired: 'La sesión de notarización venció sin que llegaras a conectarte con un notario',
+  canceled: 'La sesión de notarización fue cancelada',
+  admin_manual: 'Reembolso manual solicitado',
+};
+
+function refundNotificationEmailHtml({ amount, reasonLabel }) {
+  return `<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#f5f1ea;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f1ea;padding:32px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;">
+          <tr>
+            <td style="background:#0f3d3e;padding:24px 32px;">
+              <div style="font-family:Georgia,'Iowan Old Style',serif;font-weight:700;font-size:20px;color:#ffffff;">Firmaza</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:36px 32px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;">
+              <h1 style="margin:0 0 14px;font-family:Georgia,'Iowan Old Style',serif;font-weight:700;font-size:22px;line-height:1.3;color:#1c1917;">Te devolvimos tu pago</h1>
+              <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#4a4440;">No pudimos completar tu notarización, así que te reembolsamos <strong>$${amount.toFixed(2)}</strong> a la misma tarjeta con la que pagaste.</p>
+              <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#6b6560;">Motivo: ${reasonLabel}.</p>
+              <p style="margin:0 0 4px;font-size:13px;line-height:1.6;color:#9a9188;">El reembolso puede tardar de 7 a 10 días hábiles en reflejarse en tu estado de cuenta. Si quieres intentar de nuevo, puedes volver a iniciar el proceso cuando quieras.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background:#0f3d3e;padding:20px 32px;text-align:center;">
+              <p style="margin:0;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:12.5px;color:#9fc2bd;">Firmaza · Notarios de confianza, en tu idioma</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+function refundNotificationEmailText({ amount, reasonLabel }) {
+  return `Te devolvimos tu pago — Firmaza\n\nNo pudimos completar tu notarización, así que te reembolsamos $${amount.toFixed(2)} a la misma tarjeta con la que pagaste.\n\nMotivo: ${reasonLabel}.\n\nEl reembolso puede tardar de 7 a 10 días hábiles en reflejarse en tu estado de cuenta. Si quieres intentar de nuevo, puedes volver a iniciar el proceso cuando quieras.\n\n— Firmaza, notarios de confianza en tu idioma`;
+}
+
+async function sendRefundNotificationEmail(email, { amount, reasonLabel }) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey || !email) {
+    console.log(`[DEMO] Correo de reembolso para ${email}: $${amount.toFixed(2)} — ${reasonLabel}`);
+    return { demo: true };
+  }
+  const from = process.env.EMAIL_FROM || 'Firmaza <onboarding@resend.dev>';
+  const resp = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    signal: AbortSignal.timeout(15000),
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      from,
+      to: email,
+      subject: 'Te devolvimos tu pago — Firmaza',
+      html: refundNotificationEmailHtml({ amount, reasonLabel }),
+      text: refundNotificationEmailText({ amount, reasonLabel }),
+    }),
+  });
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    throw new Error(`No se pudo enviar el correo de reembolso (${resp.status}): ${errText}`);
+  }
+  return { demo: false };
+}
+
+// Punto central del reembolso automático — se llama desde el webhook de
+// Proof.com Y desde el polling de /proof-status (por si el webhook nunca
+// llega o llega tarde), así que tiene que ser segura de llamar más de una
+// vez para la MISMA sesión sin reembolsar dos veces.
+//
+// Reglas de elegibilidad (a propósito, todas tienen que cumplirse):
+// - El pago fue real con Square (mode 'square' con paidAt) — un pago demo no
+//   tiene nada que reembolsar.
+// - Todavía no se había reembolsado esta sesión (s.payment.refund).
+// - Tenemos guardado el payment_id de Square (se captura en /confirm-payment
+//   justo después de verificar el pago — ver ahí).
+//
+// `reasonCode` es una clave de REFUND_REASONS ('declined' | 'expired' |
+// 'canceled' | 'admin_manual'), no el string crudo del evento/estado de
+// Proof.com, para que el webhook y el polling (que usan formatos de string
+// distintos — 'transaction.declined' vs 'declined') se normalicen antes de
+// llegar aquí.
+async function refundSessionIfEligible(s, reasonCode) {
+  if (!s || s.payment?.mode !== 'square' || !s.payment?.paidAt) return null;
+  if (s.payment?.refund) return null; // ya reembolsada — no hacer nada de nuevo
+  const paymentId = s.payment?.paymentId;
+  const reasonLabel = REFUND_REASONS[reasonCode] || REFUND_REASONS.canceled;
+  if (!paymentId) {
+    // No debería pasar (se guarda en /confirm-payment), pero si pasa hay que
+    // dejar rastro claro en vez de fallar en silencio — Ricardo puede
+    // reembolsar a mano desde el dashboard de Square usando el orderId.
+    s.history.push({ event: 'reembolso_omitido_sin_payment_id', at: new Date().toISOString(), reasonCode });
+    console.warn(`Sesión ${s.id}: no se pudo reembolsar automáticamente — falta payment_id (orderId: ${s.payment?.orderId})`);
+    return null;
+  }
+  const amountCents = Math.round((s.payment.amount || 0) * 100);
+  try {
+    const result = await refundSquarePayment({
+      paymentId,
+      amountCents,
+      reason: reasonLabel,
+      idempotencyKey: `refund:${s.id}`, // estable — ver nota en refundSquarePayment
+    });
+    s.payment.refund = {
+      mode: result.demo ? 'demo' : 'square',
+      refundId: result.refundId || null,
+      status: result.status || null,
+      amountCents,
+      reasonCode,
+      at: new Date().toISOString(),
+    };
+    s.history.push({ event: 'reembolso_automatico', at: new Date().toISOString(), reasonCode, amount: amountCents / 100 });
+    if (s.email) {
+      try {
+        await sendRefundNotificationEmail(s.email, { amount: amountCents / 100, reasonLabel });
+      } catch (emailErr) {
+        // El reembolso YA se hizo — que falle el correo de aviso no debe
+        // hacer parecer que el reembolso también falló.
+        console.error(`Sesión ${s.id}: reembolso hecho pero falló el correo de aviso:`, emailErr.message);
+      }
+    }
+    return s.payment.refund;
+  } catch (e) {
+    s.history.push({ event: 'reembolso_fallido', at: new Date().toISOString(), reasonCode, error: e.message });
+    console.error(`Sesión ${s.id}: falló el reembolso automático:`, e.message);
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1211,7 +1401,16 @@ async function handleApi(req, res, pathname, query) {
               session: s,
             });
           }
-          s.payment = { ...(s.payment || {}), mode: 'square', paidAt: new Date().toISOString() };
+          // Guardamos el payment_id (no solo el orderId) porque el Refunds
+          // API de Square pide el ID del pago, no el de la orden — sin esto,
+          // si más adelante Proof.com rechaza la notarización, no habría
+          // forma de reembolsar automáticamente (ver refundSessionIfEligible
+          // y extractSquarePaymentId).
+          const paymentId = extractSquarePaymentId(verification.order);
+          if (!paymentId) {
+            console.warn(`Sesión ${id}: pago confirmado pero no se encontró payment_id en la orden de Square ${s.payment.orderId} — el reembolso automático no podrá hacerse solo.`);
+          }
+          s.payment = { ...(s.payment || {}), mode: 'square', paidAt: new Date().toISOString(), paymentId };
           s.status = 'pagado_square';
           s.history.push({ event: 'pago_square_confirmado', at: new Date().toISOString() });
           await txn.saveSession(s);
@@ -1268,8 +1467,21 @@ async function handleApi(req, res, pathname, query) {
         try {
           const tx = await proofRon.getTransactionStatus(s.proof.transactionId);
           s.proof.status = tx?.status || s.proof.status;
-          if (tx?.status === 'completed' || tx?.status === 'released') s.status = 'notarizacion_completada';
-          else if (tx?.status === 'declined') s.status = 'notarizacion_rechazada';
+          // 'declined' (no pasó el control de identidad/seguridad) y
+          // 'expired' (nunca se conectó) disparan el reembolso automático —
+          // ver refundSessionIfEligible. Este polling es la red de
+          // seguridad por si el webhook de /webhooks/proof nunca llega o
+          // llega tarde; refundSessionIfEligible ya es segura de llamar más
+          // de una vez (revisa s.payment.refund antes de hacer nada).
+          if (tx?.status === 'completed' || tx?.status === 'released') {
+            s.status = 'notarizacion_completada';
+          } else if (tx?.status === 'declined') {
+            s.status = 'notarizacion_rechazada';
+            await refundSessionIfEligible(s, 'declined');
+          } else if (tx?.status === 'expired') {
+            s.status = 'notarizacion_rechazada';
+            await refundSessionIfEligible(s, 'expired');
+          }
           await txn.saveSession(s);
           return send(res, 200, { session: s, transaction: tx });
         } catch (e) {
@@ -1470,6 +1682,15 @@ const server = http.createServer(async (req, res) => {
             match.status = 'notarizacion_completada';
           } else if (event === 'transaction.declined' || event === 'transaction.canceled' || event === 'transaction.expired') {
             match.status = 'notarizacion_rechazada';
+            // Reembolso automático solo para 'declined' (no pasó el control
+            // de identidad/seguridad) y 'expired' (nunca se conectó) — el
+            // firmante no tuvo la culpa en ninguno de los dos casos, así que
+            // no recibió el servicio que pagó. 'canceled' se deja fuera a
+            // propósito (puede ser el propio firmante arrepintiéndose a
+            // mitad de la videollamada, no solo una falla técnica) — para
+            // esos casos existe POST /admin/sessions/:id/refund.
+            if (event === 'transaction.declined') await refundSessionIfEligible(match, 'declined');
+            else if (event === 'transaction.expired') await refundSessionIfEligible(match, 'expired');
           } else if (event === 'transaction.meeting.requested' || event === 'transaction.meeting.created' || event === 'notary.signer_ready') {
             match.status = 'en_reunion_con_notario';
           } else if (event === 'transaction.sent_to_signer') {
@@ -1528,6 +1749,52 @@ const server = http.createServer(async (req, res) => {
       const result = await proofRon.listWebhooks();
       if (!result) return send(res, 400, { error: 'PROOF_API_KEY no está configurada en el servidor' });
       return send(res, 200, { ok: true, result });
+    } catch (e) {
+      return send(res, 500, { error: e.message });
+    }
+  }
+
+  // Reembolso manual — para casos que a propósito NO califican para el
+  // reembolso automático de refundSessionIfEligible (ej. 'canceled': el
+  // firmante se arrepintió a mitad de la videollamada, o cualquier otro caso
+  // donde Ricardo decide reembolsar por su cuenta). Protegido con
+  // ADMIN_SECRET, igual que los otros /admin/*: esto mueve dinero real, así
+  // que no puede quedar abierto a nadie con el id de la sesión.
+  const refundMatch = pathname.match(/^\/admin\/sessions\/([a-f0-9]+)\/refund$/);
+  if (refundMatch && req.method === 'POST') {
+    const adminSecret = process.env.ADMIN_SECRET;
+    const provided = req.headers['x-admin-secret'];
+    if (!adminSecret || !provided || !timingSafeStringEqual(provided, adminSecret)) {
+      return send(res, 401, { error: 'No autorizado' });
+    }
+    const sessionId = refundMatch[1];
+    try {
+      const body = await readBody(req);
+      // Cualquier código fuera de esta lista cae a 'admin_manual' — no se
+      // deja que el body elija un texto arbitrario para REFUND_REASONS, ese
+      // catálogo es fijo a propósito (mismo motivo que PRICE_CATALOG: nada
+      // que venga del cliente decide texto que después se usa para explicar
+      // un movimiento de dinero real).
+      const reasonCode = ['declined', 'expired', 'canceled'].includes(body.reasonCode) ? body.reasonCode : 'admin_manual';
+      const result = await db.withSessionLock(sessionId, async (txn) => {
+        const s = await txn.getSession();
+        if (!s) return { notFound: true };
+        if (s.payment?.mode !== 'square' || !s.payment?.paidAt) {
+          return { error: 'Esta sesión no tiene un pago real de Square para reembolsar (¿modo demo, o todavía no pagada?).' };
+        }
+        if (s.payment?.refund) {
+          return { error: 'Esta sesión ya fue reembolsada.', refund: s.payment.refund };
+        }
+        const refund = await refundSessionIfEligible(s, reasonCode);
+        await txn.saveSession(s);
+        if (!refund) {
+          return { error: 'No se pudo procesar el reembolso — revisa los logs del servidor (falta payment_id, o Square rechazó la solicitud).' };
+        }
+        return { refund, session: s };
+      });
+      if (result.notFound) return send(res, 404, { error: 'Sesión no encontrada' });
+      if (result.error) return send(res, 400, { error: result.error, refund: result.refund || null });
+      return send(res, 200, { ok: true, refund: result.refund });
     } catch (e) {
       return send(res, 500, { error: e.message });
     }
