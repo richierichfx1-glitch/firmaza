@@ -613,16 +613,18 @@ $('#toStep2').addEventListener('click', async () => {
   showStep(2);
 });
 
-// Total a pagar: $25 base + $25 por cada firmante adicional ($10 firma +
-// $15 sello, p. ej. el otro padre/madre en el permiso de viaje). Solo es
-// informativo: el monto real lo decide el servidor en /checkout.
+// Total a pagar: $39 base + $40 por cada firmante adicional ($15 firma +
+// $25 sello, p. ej. el otro padre/madre en el permiso de viaje). Solo es
+// informativo: el monto real lo decide el servidor en /checkout
+// (PRICE_CATALOG/priceForSession en server.js) — estos números son solo
+// para mostrarlos, nunca se mandan de vuelta como el precio a cobrar.
 function renderPriceSummary() {
   const price = session.document && session.document.price;
   const extras = (price && price.extraSigners) || 0;
   $('#extraSignerRows').innerHTML = extras ? `
-    <div class="summary-row"><span>Firmante adicional${extras > 1 ? ` (×${extras})` : ''}</span><strong>$${(10 * extras).toFixed(2)}</strong></div>
-    <div class="summary-row"><span>Sello notarial adicional${extras > 1 ? ` (×${extras})` : ''}</span><strong>$${(15 * extras).toFixed(2)}</strong></div>` : '';
-  const total = price ? price.amountCents / 100 : 25;
+    <div class="summary-row"><span>Firmante adicional${extras > 1 ? ` (×${extras})` : ''}</span><strong>$${(15 * extras).toFixed(2)}</strong></div>
+    <div class="summary-row"><span>Sello notarial adicional${extras > 1 ? ` (×${extras})` : ''}</span><strong>$${(25 * extras).toFixed(2)}</strong></div>` : '';
+  const total = price ? price.amountCents / 100 : 39;
   $('#totalAmount').textContent = `$${total.toFixed(2)}`;
 }
 
