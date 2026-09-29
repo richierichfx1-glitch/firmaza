@@ -120,6 +120,8 @@ async function migrate() {
       note TEXT NOT NULL DEFAULT '',
       PRIMARY KEY (code, month)
     );
+    -- purpose: 'client' (cuenta de cliente) o 'admin' (página /admin/referidos).
+    ALTER TABLE magic_links ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'client';
     CREATE INDEX IF NOT EXISTS idx_sessions_referral_code ON sessions ((referral->>'code'));
   `);
 }
@@ -330,10 +332,10 @@ async function updateClientNucleo(email, nucleo) {
 // ---------------------------------------------------------------------------
 // Autenticación sin contraseña (enlace mágico)
 // ---------------------------------------------------------------------------
-async function createMagicLink(token, email, expiresAt) {
+async function createMagicLink(token, email, expiresAt, purpose = 'client') {
   await query(
-    'INSERT INTO magic_links (token, email, created_at, expires_at, used) VALUES ($1,$2,now(),$3,false)',
-    [token, email, expiresAt]
+    'INSERT INTO magic_links (token, email, created_at, expires_at, used, purpose) VALUES ($1,$2,now(),$3,false,$4)',
+    [token, email, expiresAt, purpose]
   );
   // Limpieza oportunista de enlaces viejos (ya usados o vencidos hace rato)
   // para que la tabla no crezca sin límite — no es crítico, así que si falla
@@ -351,6 +353,7 @@ async function getMagicLink(token) {
     createdAt: r.created_at,
     expiresAt: r.expires_at,
     used: r.used,
+    purpose: r.purpose || 'client',
   };
 }
 

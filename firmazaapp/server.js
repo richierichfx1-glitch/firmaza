@@ -49,7 +49,10 @@
  *   -- Programa de referidos (influencers) — ver REFERRAL_DISCOUNT_CENTS --
  *   POST   /api/sessions/:id/referral   -> aplica un código de influencer ($5 de descuento)
  *   DELETE /api/sessions/:id/referral   -> quita el código aplicado
- *   GET  /admin/referidos               -> página privada para administrar códigos y pagos (pide ADMIN_SECRET)
+ *   GET  /admin/referidos               -> página privada para administrar códigos y pagos (entrada con enlace al correo de admin)
+ *   POST /admin/api/request-link        -> manda un enlace de acceso a un correo de ADMIN_EMAILS (por defecto contacto@firmaza.com)
+ *   GET  /admin/verify?token=...        -> valida ese enlace y abre la sesión de admin (cookie httpOnly, 12 horas)
+ *   GET  /admin/api/me | POST /admin/api/logout
  *   GET  /admin/api/referral-codes      -> lista de códigos (ADMIN_SECRET)
  *   POST /admin/api/referral-codes      -> crea un código (ADMIN_SECRET)
  *   POST /admin/api/referral-codes/:code -> activa/desactiva o edita un código (ADMIN_SECRET)
@@ -320,6 +323,41 @@ function markReferralEarned(s) {
   if (s.payment?.mode !== 'square' || !s.payment?.paidAt || s.payment?.refund) return;
   s.referral.earnedAt = new Date().toISOString();
   s.history.push({ event: 'comision_referido_ganada', at: s.referral.earnedAt, code: s.referral.code });
+}
+
+// ---------------------------------------------------------------------------
+// Acceso de administrador (página /admin/referidos) con enlace al correo —
+// sin contraseña, igual que las cuentas de cliente. Solo los correos de
+// ADMIN_EMAILS (separados por coma) pueden entrar; si la variable no existe,
+// se usa contacto@firmaza.com. El enlace dura 15 minutos y la sesión 12
+// horas. Las rutas /admin/api/* siguen aceptando también el encabezado
+// x-admin-secret (ADMIN_SECRET) para uso técnico.
+// ---------------------------------------------------------------------------
+const ADMIN_COOKIE = 'firmaza_admin';
+const ADMIN_SESSION_SECONDS = 12 * 60 * 60;
+const ADMIN_SESSION_CLIENT_ID = '__admin__';
+function adminEmails() {
+  const raw = process.env.ADMIN_EMAILS || 'contacto@firmaza.com';
+  return raw.split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
+}
+function adminCookieHeader(req, token, maxAgeSeconds) {
+  const parts = [`${ADMIN_COOKIE}=${token}`, 'HttpOnly', 'Path=/admin', `Max-Age=${maxAgeSeconds}`, 'SameSite=Lax'];
+  if (isHttps(req)) parts.push('Secure');
+  return parts.join('; ');
+}
+async function getAdminFromRequest(req) {
+  const token = parseCookies(req)[ADMIN_COOKIE];
+  if (!token) return null;
+  const ls = await db.getLoginSession(token);
+  if (!ls || ls.clientId !== ADMIN_SESSION_CLIENT_ID) return null;
+  if (!adminEmails().includes(String(ls.email).toLowerCase())) return null;
+  return { email: ls.email };
+}
+async function isAdminRequest(req) {
+  const adminSecret = process.env.ADMIN_SECRET;
+  const provided = req.headers['x-admin-secret'];
+  if (adminSecret && provided && timingSafeStringEqual(provided, adminSecret)) return true;
+  return !!(await getAdminFromRequest(req));
 }
 
 const SESSION_COOKIE = 'firmaza_session';
@@ -1742,7 +1780,7 @@ const server = http.createServer(async (req, res) => {
     const token = u.searchParams.get('token') || '';
     try {
       const link = await db.getMagicLink(token);
-      const valid = link && !link.used && new Date(link.expiresAt).getTime() >= Date.now();
+      const valid = link && !link.used && link.purpose !== 'admin' && new Date(link.expiresAt).getTime() >= Date.now();
       if (!valid) {
         res.writeHead(302, { Location: '/cuenta?error=enlace_invalido' });
         return res.end();
@@ -1882,10 +1920,65 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     return serveStatic(req, res, path.join(PUBLIC_DIR, 'admin-referidos.html'));
   }
+  if (pathname === '/admin/api/request-link' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const email = String(body.email || '').trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return send(res, 400, { error: 'Escribe un correo válido' });
+      // Misma respuesta sea o no un correo de admin — para no revelar cuáles lo son.
+      const generic = { ok: true, message: 'Si ese correo tiene acceso, te llegará un enlace en unos segundos.' };
+      if (!adminEmails().includes(email)) return send(res, 200, generic);
+      if ((await db.countActiveMagicLinksForEmail(email)) >= 5) {
+        return send(res, 429, { error: 'Demasiados intentos. Espera unos minutos e inténtalo de nuevo.' });
+      }
+      const token = crypto.randomBytes(32).toString('hex');
+      await db.createMagicLink(token, email, new Date(Date.now() + 15 * 60 * 1000).toISOString(), 'admin');
+      // OJO: a diferencia del enlace de cliente, en modo demo el enlace de
+      // admin NUNCA se devuelve en la respuesta (solo se imprime en los logs
+      // del servidor) — si no, cualquiera podría entrar sin tener el correo.
+      await sendMagicLinkEmail(email, `${trustedOrigin(req)}/admin/verify?token=${token}`);
+      return send(res, 200, generic);
+    } catch (e) {
+      console.error('[admin] No se pudo enviar el enlace de acceso:', e.message);
+      return send(res, 500, { error: 'No pudimos enviar el correo. Inténtalo de nuevo en unos minutos.' });
+    }
+  }
+  if (pathname === '/admin/verify' && req.method === 'GET') {
+    const token = u.searchParams.get('token') || '';
+    try {
+      const link = await db.getMagicLink(token);
+      const valid = link && !link.used && link.purpose === 'admin'
+        && new Date(link.expiresAt).getTime() >= Date.now()
+        && adminEmails().includes(String(link.email).toLowerCase());
+      if (!valid) {
+        res.writeHead(302, { Location: '/admin/referidos?error=enlace_invalido' });
+        return res.end();
+      }
+      await db.markMagicLinkUsed(token);
+      const sessionToken = crypto.randomBytes(32).toString('hex');
+      await db.createLoginSession(sessionToken, link.email, ADMIN_SESSION_CLIENT_ID,
+        new Date(Date.now() + ADMIN_SESSION_SECONDS * 1000).toISOString());
+      res.writeHead(302, { Location: '/admin/referidos', 'Set-Cookie': adminCookieHeader(req, sessionToken, ADMIN_SESSION_SECONDS) });
+      return res.end();
+    } catch (e) {
+      console.error('Error en /admin/verify:', e.message);
+      res.writeHead(302, { Location: '/admin/referidos?error=enlace_invalido' });
+      return res.end();
+    }
+  }
+  if (pathname === '/admin/api/me' && req.method === 'GET') {
+    const admin = await getAdminFromRequest(req).catch(() => null);
+    return send(res, 200, admin ? { authenticated: true, email: admin.email } : { authenticated: false });
+  }
+  if (pathname === '/admin/api/logout' && req.method === 'POST') {
+    const token = parseCookies(req)[ADMIN_COOKIE];
+    if (token) await db.deleteLoginSession(token).catch(() => {});
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': adminCookieHeader(req, '', 0) });
+    return res.end(JSON.stringify({ ok: true }));
+  }
+
   if (pathname.startsWith('/admin/api/referral')) {
-    const adminSecret = process.env.ADMIN_SECRET;
-    const provided = req.headers['x-admin-secret'];
-    if (!adminSecret || !provided || !timingSafeStringEqual(provided, adminSecret)) {
+    if (!(await isAdminRequest(req))) {
       return send(res, 401, { error: 'No autorizado' });
     }
     try {
