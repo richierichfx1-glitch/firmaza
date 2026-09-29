@@ -423,3 +423,13 @@ details[open] .nucleo-toggle .chev{transform:rotate(180deg)}
 
 /* Aviso informativo arriba de los campos de una plantilla */
 .template-notice{background:rgba(240,169,58,.14);border:1px solid rgba(240,169,58,.45);border-radius:10px;padding:10px 12px;margin:0 0 14px;font-size:14px;line-height:1.5}
+
+/* Código de descuento / referido (paso de pago) */
+.coupon-row{display:flex;gap:8px}
+.coupon-row input{flex:1;min-width:0;text-transform:uppercase;letter-spacing:.04em}
+.coupon-row .btn{padding:11px 18px;white-space:nowrap}
+.coupon-msg{font-size:13.5px;font-weight:600;margin-top:6px;min-height:1em}
+.coupon-msg.ok{color:var(--ok)}
+.coupon-msg.err{color:#b3261e}
+.summary-row.discount strong{color:var(--ok)}
+.coupon-remove{background:none;border:0;color:var(--ink-soft);text-decoration:underline;cursor:pointer;font:inherit;font-size:13px;padding:0;margin-left:6px}
