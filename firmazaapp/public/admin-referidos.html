@@ -31,16 +31,17 @@
 <header class="nav">
   <div class="container nav-inner">
     <a href="/" class="brand" style="text-decoration:none"><span class="dot"></span>Firmaza<small>Referidos</small></a>
+    <div class="nav-cta"><button class="btn btn-outline btn-sm" id="logoutBtn" style="display:none">Salir</button></div>
   </div>
 </header>
 
 <div class="app-shell" style="max-width:960px">
   <div class="card" id="loginCard">
     <h2>Administrar referidos</h2>
-    <p class="help">Escribe tu ADMIN_SECRET (el mismo que está en Render). Solo se guarda en esta pestaña.</p>
+    <p class="help">Escribe tu correo de administrador y te mandamos un enlace para entrar (sin contraseña). El enlace dura 15 minutos.</p>
     <form id="loginForm">
-      <div class="field"><label for="secret">Clave de administrador</label><input type="password" id="secret" autocomplete="off" required></div>
-      <button type="submit" class="btn btn-primary">Entrar</button>
+      <div class="field"><label for="adminEmail">Correo</label><input type="email" id="adminEmail" autocomplete="email" placeholder="contacto@firmaza.com" required></div>
+      <button type="submit" class="btn btn-primary">Enviarme el enlace</button>
       <div class="adm-msg" id="loginMsg"></div>
     </form>
   </div>
@@ -78,25 +79,21 @@
 const $ = (s) => document.querySelector(s);
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = (cents) => `$${(cents / 100).toFixed(2)}`;
-let secret = '';
-try { secret = sessionStorage.getItem('firmaza_admin') || ''; } catch (_) {}
 
 async function adminApi(path, method = 'GET', body) {
   const res = await fetch(path, {
     method,
-    headers: { 'x-admin-secret': secret, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (res.status === 401) { logout(); throw new Error('Clave incorrecta.'); }
+  if (res.status === 401) { logout(); throw new Error('Tu sesión venció. Vuelve a entrar.'); }
   if (!res.ok) throw new Error(data.error || 'Error');
   return data;
 }
 function msg(el, text, kind) { el.textContent = text || ''; el.className = `adm-msg${kind ? ' ' + kind : ''}`; }
 function logout() {
-  secret = '';
-  try { sessionStorage.removeItem('firmaza_admin'); } catch (_) {}
-  $('#panel').style.display = 'none'; $('#loginCard').style.display = '';
+  $('#panel').style.display = 'none'; $('#logoutBtn').style.display = 'none'; $('#loginCard').style.display = '';
 }
 
 // Mes anterior por defecto (lo que se paga en los primeros 5 días de este mes).
@@ -144,18 +141,25 @@ async function loadReport() {
 
 async function enter() {
   await loadCodes();
-  $('#loginCard').style.display = 'none'; $('#panel').style.display = '';
+  $('#loginCard').style.display = 'none'; $('#panel').style.display = ''; $('#logoutBtn').style.display = '';
   $('#month').value = previousMonth();
   loadReport();
 }
 
 $('#loginForm').addEventListener('submit', async (ev) => {
   ev.preventDefault();
-  secret = $('#secret').value;
+  const btn = ev.target.querySelector('button');
+  btn.disabled = true;
   try {
-    await enter();
-    try { sessionStorage.setItem('firmaza_admin', secret); } catch (_) {}
+    const data = await adminApi('/admin/api/request-link', 'POST', { email: $('#adminEmail').value.trim() });
+    msg($('#loginMsg'), data.message + ' Revisa tu bandeja (y la carpeta de spam).', 'ok');
   } catch (e) { msg($('#loginMsg'), e.message, 'err'); }
+  btn.disabled = false;
+});
+
+$('#logoutBtn').addEventListener('click', async () => {
+  await fetch('/admin/api/logout', { method: 'POST' }).catch(() => {});
+  logout();
 });
 
 $('#loadReport').addEventListener('click', loadReport);
@@ -195,7 +199,11 @@ $('#reportTable').addEventListener('click', async (ev) => {
   } catch (e) { alert(e.message); }
 });
 
-if (secret) enter().catch(() => logout());
+if (new URLSearchParams(location.search).get('error') === 'enlace_invalido') {
+  msg($('#loginMsg'), 'Ese enlace ya se usó o venció. Pide uno nuevo.', 'err');
+  history.replaceState(null, '', '/admin/referidos');
+}
+fetch('/admin/api/me').then((r) => r.json()).then((d) => { if (d.authenticated) enter(); }).catch(() => {});
 </script>
 </body>
 </html>
