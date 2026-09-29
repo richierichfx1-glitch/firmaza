@@ -168,7 +168,18 @@
     <div class="summary-row"><span>Notarización online</span><strong>$39.00</strong></div>
     <!-- Firmante(s) adicional(es): ver renderPriceSummary() en js/app.js -->
     <div id="extraSignerRows"></div>
+    <!-- Descuento por código de referido: ver renderPriceSummary() en js/app.js -->
+    <div id="discountRow"></div>
     <div class="summary-row"><span>Total</span><strong id="totalAmount">$39.00</strong></div>
+    <div class="field coupon-field" style="margin-top:16px">
+      <label for="couponCode">¿Te recomendó alguien? Código de descuento</label>
+      <div class="coupon-row">
+        <input type="text" id="couponCode" autocomplete="off" autocapitalize="characters" maxlength="20" placeholder="Ej. MARIA5">
+        <button type="button" class="btn btn-outline" id="applyCoupon">Aplicar</button>
+      </div>
+      <span class="hint">Con el código de quien te recomendó recibes $5 de descuento.</span>
+      <div class="coupon-msg" id="couponMsg" role="status" aria-live="polite"></div>
+    </div>
     <p class="help" id="paymentNote"></p>
     <br>
     <button class="btn btn-primary btn-block btn-lg" id="toStep3">Pagar y continuar</button>

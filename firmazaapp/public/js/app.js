@@ -624,8 +624,82 @@ function renderPriceSummary() {
   $('#extraSignerRows').innerHTML = extras ? `
     <div class="summary-row"><span>Firmante adicional${extras > 1 ? ` (×${extras})` : ''}</span><strong>$${(15 * extras).toFixed(2)}</strong></div>
     <div class="summary-row"><span>Sello notarial adicional${extras > 1 ? ` (×${extras})` : ''}</span><strong>$${(25 * extras).toFixed(2)}</strong></div>` : '';
-  const total = price ? price.amountCents / 100 : 39;
-  $('#totalAmount').textContent = `$${total.toFixed(2)}`;
+  const subtotal = price ? price.amountCents / 100 : 39;
+  // Descuento de referido: también solo informativo — el servidor lo vuelve
+  // a validar y lo resta él mismo en /checkout (chargeForSession).
+  const ref = session.referral;
+  const discount = ref ? (ref.discountCents || 0) / 100 : 0;
+  $('#discountRow').innerHTML = ref ? `
+    <div class="summary-row discount"><span>Descuento código ${escapeHtml(ref.code)}<button type="button" class="coupon-remove" id="removeCoupon">Quitar</button></span><strong>−$${discount.toFixed(2)}</strong></div>` : '';
+  $('#totalAmount').textContent = `$${Math.max(subtotal - discount, 1).toFixed(2)}`;
+  const couponInput = $('#couponCode');
+  if (ref) {
+    couponInput.value = ref.code;
+    couponInput.disabled = true;
+    $('#applyCoupon').disabled = true;
+    setCouponMsg(`Código aplicado${ref.influencerName ? ` — recomendado por ${ref.influencerName}` : ''}. Ahorras $${discount.toFixed(2)}.`, 'ok');
+    $('#removeCoupon').addEventListener('click', removeCoupon);
+  } else {
+    couponInput.disabled = false;
+    $('#applyCoupon').disabled = false;
+  }
+}
+
+function setCouponMsg(text, kind) {
+  const el = $('#couponMsg');
+  el.textContent = text || '';
+  el.className = `coupon-msg${kind ? ' ' + kind : ''}`;
+}
+
+async function applyCoupon() {
+  const code = $('#couponCode').value.trim().toUpperCase();
+  if (!code) return setCouponMsg('Escribe el código.', 'err');
+  const btn = $('#applyCoupon');
+  btn.disabled = true;
+  setCouponMsg('Revisando código…');
+  try {
+    const data = await api('/referral', 'POST', { code });
+    session = data.session;
+    try { localStorage.removeItem('firmaza_ref'); } catch (_) {}
+    renderPriceSummary();
+  } catch (e) {
+    btn.disabled = false;
+    setCouponMsg(e.message, 'err');
+  }
+}
+
+async function removeCoupon() {
+  try {
+    const data = await api('/referral', 'DELETE');
+    session = data.session;
+    $('#couponCode').value = '';
+    setCouponMsg('');
+    renderPriceSummary();
+  } catch (e) {
+    setCouponMsg(e.message, 'err');
+  }
+}
+
+$('#applyCoupon').addEventListener('click', applyCoupon);
+$('#couponCode').addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter') { ev.preventDefault(); applyCoupon(); }
+});
+
+// Enlace de influencer: firmaza.com/?ref=MARIA5 (o /app?ref=MARIA5). El
+// código se guarda en este navegador y se precarga en el campo del paso de
+// pago; el cliente igual tiene que darle "Aplicar" (y el servidor lo valida).
+function pendingReferralCode() {
+  const fromUrl = new URLSearchParams(location.search).get('ref');
+  try {
+    if (fromUrl) localStorage.setItem('firmaza_ref', fromUrl.toUpperCase());
+    return (fromUrl || localStorage.getItem('firmaza_ref') || '').toUpperCase();
+  } catch (_) {
+    return (fromUrl || '').toUpperCase();
+  }
+}
+{
+  const pending = pendingReferralCode();
+  if (pending && /^[A-Z0-9_-]{3,20}$/.test(pending)) $('#couponCode').value = pending;
 }
 
 // --- Paso 2: pago --------------------------------------------------------------
@@ -653,6 +727,14 @@ $('#toStep3').addEventListener('click', async () => {
       return; // dejamos el botón deshabilitado — estamos navegando fuera de la página
     }
   } catch (e) {
+    // Si el servidor quitó el código (ya no es válido), recargar la sesión
+    // para que el total mostrado coincida con lo que se va a cobrar.
+    if (session.referral) {
+      try {
+        const fresh = await fetch(`/api/sessions/${session.id}`).then((r) => r.json());
+        if (fresh.session) { session = fresh.session; renderPriceSummary(); }
+      } catch (_) {}
+    }
     alert('No se pudo iniciar el pago: ' + e.message);
   } finally {
     btn.disabled = false;

@@ -100,6 +100,27 @@ async function migrate() {
     -- existen (creadas por un despliegue anterior) reciban la columna nueva es
     -- con un ALTER TABLE explícito.
     ALTER TABLE sessions ADD COLUMN IF NOT EXISTS owner_token TEXT;
+    -- Programa de referidos (influencers). Ver "Referidos" más abajo y la
+    -- nota junto a REFERRAL_DISCOUNT_CENTS en server.js.
+    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS referral JSONB;
+    CREATE TABLE IF NOT EXISTS referral_codes (
+      code TEXT PRIMARY KEY,               -- siempre en MAYÚSCULAS
+      influencer_name TEXT NOT NULL,
+      influencer_email TEXT NOT NULL DEFAULT '',
+      payout_info TEXT NOT NULL DEFAULT '', -- p. ej. "Zelle 816-555-1234"
+      active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS referral_payouts (
+      code TEXT NOT NULL,
+      month TEXT NOT NULL,                 -- 'YYYY-MM' del mes en que se ganó la comisión
+      amount_cents INTEGER NOT NULL,
+      referrals INTEGER NOT NULL,
+      paid_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      note TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (code, month)
+    );
+    CREATE INDEX IF NOT EXISTS idx_sessions_referral_code ON sessions ((referral->>'code'));
   `);
 }
 
@@ -123,6 +144,7 @@ function rowToSession(r) {
     roomId: r.room_id || null,
     proof: r.proof || null,
     history: r.history || [],
+    referral: r.referral || null,
   };
 }
 
@@ -186,8 +208,8 @@ async function getSessionByProofTransactionId(transactionId) {
 // abajo), que serializa el ciclo completo leer-modificar-guardar por sesión.
 async function saveSession(s, client) {
   await query(
-    `INSERT INTO sessions (id, created_at, signer_name, email, language, status, document, identity, payment, signature, notary_id, room_id, proof, history)
-     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12,$13::jsonb,$14::jsonb)
+    `INSERT INTO sessions (id, created_at, signer_name, email, language, status, document, identity, payment, signature, notary_id, room_id, proof, history, referral)
+     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12,$13::jsonb,$14::jsonb,$15::jsonb)
      ON CONFLICT (id) DO UPDATE SET
        signer_name = EXCLUDED.signer_name,
        email = EXCLUDED.email,
@@ -200,7 +222,8 @@ async function saveSession(s, client) {
        notary_id = EXCLUDED.notary_id,
        room_id = EXCLUDED.room_id,
        proof = EXCLUDED.proof,
-       history = EXCLUDED.history`,
+       history = EXCLUDED.history,
+       referral = EXCLUDED.referral`,
     [
       s.id,
       s.createdAt || new Date().toISOString(),
@@ -216,6 +239,7 @@ async function saveSession(s, client) {
       s.roomId || null,
       s.proof != null ? JSON.stringify(s.proof) : null,
       JSON.stringify(s.history || []),
+      s.referral != null ? JSON.stringify(s.referral) : null,
     ],
     client
   );
@@ -381,6 +405,107 @@ async function getFile(id) {
   return { contentType: r.content_type, data: r.data };
 }
 
+// ---------------------------------------------------------------------------
+// Referidos (códigos de influencer)
+// ---------------------------------------------------------------------------
+function rowToReferralCode(r) {
+  if (!r) return null;
+  return {
+    code: r.code,
+    influencerName: r.influencer_name,
+    influencerEmail: r.influencer_email || '',
+    payoutInfo: r.payout_info || '',
+    active: r.active,
+    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : r.created_at,
+  };
+}
+
+async function getReferralCode(code) {
+  const { rows } = await query('SELECT * FROM referral_codes WHERE code = upper($1)', [code]);
+  return rowToReferralCode(rows[0]);
+}
+
+async function listReferralCodes() {
+  const { rows } = await query('SELECT * FROM referral_codes ORDER BY created_at DESC');
+  return rows.map(rowToReferralCode);
+}
+
+async function createReferralCode({ code, influencerName, influencerEmail, payoutInfo }) {
+  const { rows } = await query(
+    `INSERT INTO referral_codes (code, influencer_name, influencer_email, payout_info)
+     VALUES (upper($1),$2,$3,$4) ON CONFLICT (code) DO NOTHING RETURNING *`,
+    [code, influencerName, influencerEmail || '', payoutInfo || '']
+  );
+  return rowToReferralCode(rows[0]);
+}
+
+async function updateReferralCode(code, { active, payoutInfo, influencerEmail, influencerName }) {
+  const { rows } = await query(
+    `UPDATE referral_codes SET
+       active = COALESCE($2, active),
+       payout_info = COALESCE($3, payout_info),
+       influencer_email = COALESCE($4, influencer_email),
+       influencer_name = COALESCE($5, influencer_name)
+     WHERE code = upper($1) RETURNING *`,
+    [code, active ?? null, payoutInfo ?? null, influencerEmail ?? null, influencerName ?? null]
+  );
+  return rowToReferralCode(rows[0]);
+}
+
+// ¿Este correo ya usó ALGÚN código de referido en una sesión pagada? (El
+// descuento es solo para la primera notarización de cada cliente.) Se
+// excluye la sesión actual para que recargar la página no cuente doble.
+async function emailAlreadyUsedReferral(email, excludeSessionId) {
+  const { rows } = await query(
+    `SELECT 1 FROM sessions
+     WHERE lower(email) = lower($1) AND id <> $2
+       AND referral IS NOT NULL AND payment->>'paidAt' IS NOT NULL
+     LIMIT 1`,
+    [email, excludeSessionId || '']
+  );
+  return rows.length > 0;
+}
+
+// Sesiones que generaron comisión en un mes ('YYYY-MM', hora de Kansas
+// City): pagadas con Square, notarización completada, sin reembolso.
+async function getEarnedReferralSessions(month) {
+  const { rows } = await query(
+    `SELECT id, email, signer_name, referral, payment FROM sessions
+     WHERE referral->>'earnedAt' IS NOT NULL
+       AND to_char((referral->>'earnedAt')::timestamptz AT TIME ZONE 'America/Chicago', 'YYYY-MM') = $1
+       AND payment->>'mode' = 'square'
+       AND payment->'refund' IS NULL
+     ORDER BY referral->>'earnedAt'`,
+    [month]
+  );
+  return rows.map((r) => ({
+    sessionId: r.id,
+    email: r.email,
+    signerName: r.signer_name,
+    code: r.referral.code,
+    commissionCents: r.referral.commissionCents,
+    earnedAt: r.referral.earnedAt,
+    paidAmount: r.payment?.amount ?? null,
+  }));
+}
+
+async function getReferralPayouts(month) {
+  const { rows } = await query('SELECT * FROM referral_payouts WHERE month = $1', [month]);
+  return rows.map((r) => ({
+    code: r.code, month: r.month, amountCents: r.amount_cents, referrals: r.referrals,
+    paidAt: r.paid_at instanceof Date ? r.paid_at.toISOString() : r.paid_at, note: r.note,
+  }));
+}
+
+async function markReferralPayoutPaid({ code, month, amountCents, referrals, note }) {
+  const { rows } = await query(
+    `INSERT INTO referral_payouts (code, month, amount_cents, referrals, note)
+     VALUES (upper($1),$2,$3,$4,$5) ON CONFLICT (code, month) DO NOTHING RETURNING *`,
+    [code, month, amountCents, referrals, note || '']
+  );
+  return rows[0] || null;
+}
+
 module.exports = {
   migrate,
   defaultNucleo,
@@ -408,4 +533,13 @@ module.exports = {
   // archivos
   saveFile,
   getFile,
+  // referidos
+  getReferralCode,
+  listReferralCodes,
+  createReferralCode,
+  updateReferralCode,
+  emailAlreadyUsedReferral,
+  getEarnedReferralSessions,
+  getReferralPayouts,
+  markReferralPayoutPaid,
 };

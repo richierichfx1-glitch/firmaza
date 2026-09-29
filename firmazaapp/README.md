@@ -235,3 +235,10 @@ public/
   css/style.css           estilos (con soporte de tema claro/oscuro)
 .env.example              variables de entorno (copia a .env y llena)
 ```
+
+## Programa de referidos (influencers)
+
+- Cada influencer tiene un código (ej. `MARIA5`). El cliente escribe el código en el paso de pago y recibe **$5 de descuento**; el influencer gana **$5 de comisión**.
+- Enlace para compartir: `https://firmaza.com/?ref=MARIA5` (precarga el código en el paso de pago).
+- La comisión solo cuenta cuando la notarización se **completa** con pago real de Square y **sin reembolso**. El descuento es **una vez por correo** y nadie puede usar su propio código.
+- Administración en **`/admin/referidos`** (pide el `ADMIN_SECRET`): crear/desactivar códigos, ver cuánto se le debe a cada influencer por mes y marcar como pagado. Los pagos se hacen a mano (Zelle, etc.) en los primeros 5 días del mes siguiente.

@@ -234,6 +234,14 @@
 </a>
 
 <script>
+// Enlace de influencer (firmaza.com/?ref=CODIGO): se guarda para precargar
+// el código de descuento en el paso de pago de /app (ver js/app.js).
+try {
+  const ref = new URLSearchParams(location.search).get('ref');
+  if (ref && /^[A-Za-z0-9_-]{3,20}$/.test(ref)) localStorage.setItem('firmaza_ref', ref.toUpperCase());
+} catch (_) {}
+</script>
+<script>
 document.querySelectorAll('.faq-item').forEach(item=>{
   item.querySelector('.faq-q').addEventListener('click', ()=>{
     const wasOpen = item.classList.contains('open');

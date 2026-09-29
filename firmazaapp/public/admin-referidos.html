@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta name="robots" content="noindex, nofollow">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Referidos — Firmaza</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+<style>
+  .adm-table{width:100%;border-collapse:collapse;font-size:14px}
+  .adm-table th,.adm-table td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  .adm-table th{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft)}
+  .adm-table td.num{font-family:var(--font-mono);white-space:nowrap}
+  .adm-scroll{overflow-x:auto}
+  .adm-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
+  @media (max-width:640px){.adm-grid{grid-template-columns:1fr}}
+  .pill-off{color:var(--ink-soft)}
+  .pill-paid{color:var(--ok);font-weight:700}
+  .adm-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .adm-small{font-size:12.5px;color:var(--ink-soft)}
+  .adm-msg{font-size:13.5px;font-weight:600;min-height:1em;margin-top:8px}
+  .adm-msg.err{color:#b3261e}.adm-msg.ok{color:var(--ok)}
+  .btn-sm{padding:7px 12px;font-size:13px}
+  #panel .card{margin-bottom:18px}
+</style>
+</head>
+<body>
+<header class="nav">
+  <div class="container nav-inner">
+    <a href="/" class="brand" style="text-decoration:none"><span class="dot"></span>Firmaza<small>Referidos</small></a>
+  </div>
+</header>
+
+<div class="app-shell" style="max-width:960px">
+  <div class="card" id="loginCard">
+    <h2>Administrar referidos</h2>
+    <p class="help">Escribe tu ADMIN_SECRET (el mismo que está en Render). Solo se guarda en esta pestaña.</p>
+    <form id="loginForm">
+      <div class="field"><label for="secret">Clave de administrador</label><input type="password" id="secret" autocomplete="off" required></div>
+      <button type="submit" class="btn btn-primary">Entrar</button>
+      <div class="adm-msg" id="loginMsg"></div>
+    </form>
+  </div>
+
+  <div id="panel" style="display:none">
+    <div class="card">
+      <h2>Comisiones por mes</h2>
+      <p class="help">Se cuenta $5 por cada cliente que usó el código, pagó y completó su notarización (sin reembolso). Paga los primeros 5 días del mes siguiente.</p>
+      <div class="adm-row">
+        <input type="month" id="month" style="padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg-raised);color:var(--ink);font:inherit">
+        <button class="btn btn-outline btn-sm" id="loadReport">Ver</button>
+      </div>
+      <div class="adm-scroll" style="margin-top:14px"><table class="adm-table" id="reportTable"></table></div>
+      <div class="adm-msg" id="reportMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Códigos de influencers</h2>
+      <form id="createForm">
+        <div class="adm-grid">
+          <div class="field"><label for="cCode">Código</label><input id="cCode" maxlength="20" placeholder="MARIA5" required style="text-transform:uppercase"><span class="hint">3–20 letras o números, sin espacios.</span></div>
+          <div class="field"><label for="cName">Nombre del influencer</label><input id="cName" maxlength="120" required></div>
+          <div class="field"><label for="cEmail">Correo del influencer</label><input id="cEmail" type="email" maxlength="200"><span class="hint">Para que no pueda usar su propio código.</span></div>
+          <div class="field"><label for="cPayout">Cómo se le paga</label><input id="cPayout" maxlength="200" placeholder="Zelle 816-555-1234"></div>
+        </div>
+        <button type="submit" class="btn btn-primary">Crear código</button>
+        <div class="adm-msg" id="createMsg"></div>
+      </form>
+      <div class="adm-scroll" style="margin-top:18px"><table class="adm-table" id="codesTable"></table></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const money = (cents) => `$${(cents / 100).toFixed(2)}`;
+let secret = '';
+try { secret = sessionStorage.getItem('firmaza_admin') || ''; } catch (_) {}
+
+async function adminApi(path, method = 'GET', body) {
+  const res = await fetch(path, {
+    method,
+    headers: { 'x-admin-secret': secret, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) { logout(); throw new Error('Clave incorrecta.'); }
+  if (!res.ok) throw new Error(data.error || 'Error');
+  return data;
+}
+function msg(el, text, kind) { el.textContent = text || ''; el.className = `adm-msg${kind ? ' ' + kind : ''}`; }
+function logout() {
+  secret = '';
+  try { sessionStorage.removeItem('firmaza_admin'); } catch (_) {}
+  $('#panel').style.display = 'none'; $('#loginCard').style.display = '';
+}
+
+// Mes anterior por defecto (lo que se paga en los primeros 5 días de este mes).
+function previousMonth() {
+  const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+async function loadCodes() {
+  const { codes } = await adminApi('/admin/api/referral-codes');
+  $('#codesTable').innerHTML = codes.length ? `
+    <tr><th>Código</th><th>Influencer</th><th>Pago</th><th>Enlace</th><th></th></tr>
+    ${codes.map((c) => `<tr>
+      <td class="num">${esc(c.code)}${c.active ? '' : ' <span class="pill-off">(inactivo)</span>'}</td>
+      <td>${esc(c.influencerName)}<div class="adm-small">${esc(c.influencerEmail)}</div></td>
+      <td>${esc(c.payoutInfo)}</td>
+      <td class="adm-small">${esc(location.origin)}/?ref=${esc(c.code)}</td>
+      <td><button class="btn btn-outline btn-sm" data-toggle="${esc(c.code)}" data-active="${c.active}">${c.active ? 'Desactivar' : 'Activar'}</button></td>
+    </tr>`).join('')}` : '<tr><td class="adm-small">Todavía no hay códigos.</td></tr>';
+}
+
+async function loadReport() {
+  const month = $('#month').value;
+  msg($('#reportMsg'), 'Cargando…');
+  try {
+    const { rows } = await adminApi(`/admin/api/referral-report?month=${encodeURIComponent(month)}`);
+    const total = rows.reduce((s, r) => s + r.amountCents, 0);
+    const pending = rows.filter((r) => !r.payout).reduce((s, r) => s + r.amountCents, 0);
+    $('#reportTable').innerHTML = rows.length ? `
+      <tr><th>Influencer</th><th>Clientes</th><th>Comisión</th><th>Cómo pagar</th><th>Estado</th></tr>
+      ${rows.map((r) => `<tr>
+        <td>${esc(r.influencerName)}<div class="adm-small">${esc(r.code)}</div></td>
+        <td class="num">${r.referrals}</td>
+        <td class="num">${money(r.amountCents)}</td>
+        <td>${esc(r.payoutInfo)}</td>
+        <td>${r.payout
+          ? `<span class="pill-paid">Pagado</span><div class="adm-small">${new Date(r.payout.paidAt).toLocaleDateString('es-US')}${r.payout.note ? ' · ' + esc(r.payout.note) : ''}</div>`
+          : `<button class="btn btn-primary btn-sm" data-pay="${esc(r.code)}" data-amount="${r.amountCents}">Marcar pagado</button>`}</td>
+      </tr>`).join('')}
+      <tr><td><strong>Total</strong></td><td></td><td class="num"><strong>${money(total)}</strong></td><td colspan="2" class="adm-small">Pendiente: ${money(pending)}</td></tr>`
+      : '<tr><td class="adm-small">No hubo comisiones ese mes.</td></tr>';
+    msg($('#reportMsg'), '');
+  } catch (e) { msg($('#reportMsg'), e.message, 'err'); }
+}
+
+async function enter() {
+  await loadCodes();
+  $('#loginCard').style.display = 'none'; $('#panel').style.display = '';
+  $('#month').value = previousMonth();
+  loadReport();
+}
+
+$('#loginForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  secret = $('#secret').value;
+  try {
+    await enter();
+    try { sessionStorage.setItem('firmaza_admin', secret); } catch (_) {}
+  } catch (e) { msg($('#loginMsg'), e.message, 'err'); }
+});
+
+$('#loadReport').addEventListener('click', loadReport);
+
+$('#createForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  try {
+    await adminApi('/admin/api/referral-codes', 'POST', {
+      code: $('#cCode').value.trim().toUpperCase(),
+      influencerName: $('#cName').value.trim(),
+      influencerEmail: $('#cEmail').value.trim(),
+      payoutInfo: $('#cPayout').value.trim(),
+    });
+    ev.target.reset();
+    msg($('#createMsg'), 'Código creado.', 'ok');
+    loadCodes();
+  } catch (e) { msg($('#createMsg'), e.message, 'err'); }
+});
+
+$('#codesTable').addEventListener('click', async (ev) => {
+  const b = ev.target.closest('[data-toggle]');
+  if (!b) return;
+  try {
+    await adminApi(`/admin/api/referral-codes/${encodeURIComponent(b.dataset.toggle)}`, 'POST', { active: b.dataset.active !== 'true' });
+    loadCodes();
+  } catch (e) { alert(e.message); }
+});
+
+$('#reportTable').addEventListener('click', async (ev) => {
+  const b = ev.target.closest('[data-pay]');
+  if (!b) return;
+  const note = prompt(`¿Confirmas que ya le pagaste ${money(Number(b.dataset.amount))} a ${b.dataset.pay}? Nota opcional (ej. "Zelle 3 oct"):`, '');
+  if (note === null) return;
+  try {
+    await adminApi('/admin/api/referral-payouts', 'POST', { code: b.dataset.pay, month: $('#month').value, note });
+    loadReport();
+  } catch (e) { alert(e.message); }
+});
+
+if (secret) enter().catch(() => logout());
+</script>
+</body>
+</html>
