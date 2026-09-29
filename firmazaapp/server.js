@@ -45,6 +45,16 @@
  *   POST /admin/sessions/:id/refund -> reembolso manual protegido con ADMIN_SECRET, para casos que no califican para el reembolso automático (ej. 'canceled')
  *   POST /admin/register-proof-webhook -> registra la suscripción de webhooks v2 en Proof.com (una vez, protegido con ADMIN_SECRET)
  *   GET  /admin/list-proof-webhooks    -> lista las suscripciones de webhooks ya registradas en Proof.com (protegido con ADMIN_SECRET)
+ *
+ *   -- Programa de referidos (influencers) — ver REFERRAL_DISCOUNT_CENTS --
+ *   POST   /api/sessions/:id/referral   -> aplica un código de influencer ($5 de descuento)
+ *   DELETE /api/sessions/:id/referral   -> quita el código aplicado
+ *   GET  /admin/referidos               -> página privada para administrar códigos y pagos (pide ADMIN_SECRET)
+ *   GET  /admin/api/referral-codes      -> lista de códigos (ADMIN_SECRET)
+ *   POST /admin/api/referral-codes      -> crea un código (ADMIN_SECRET)
+ *   POST /admin/api/referral-codes/:code -> activa/desactiva o edita un código (ADMIN_SECRET)
+ *   GET  /admin/api/referral-report?month=YYYY-MM -> cuánto se le debe a cada influencer ese mes (ADMIN_SECRET)
+ *   POST /admin/api/referral-payouts    -> marca como pagada la comisión de un influencer para un mes (ADMIN_SECRET)
  *   GET  /uploads/:id               -> sirve un archivo guardado en la base de datos (documento/firma)
  *
  *   -- Acceso del panel de notario (/notario) --
@@ -248,6 +258,70 @@ function priceForSession(s) {
       : base.description,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Programa de referidos (influencers)
+// ---------------------------------------------------------------------------
+// Cada influencer tiene un código (p. ej. MARIA5). El cliente que lo usa
+// recibe $5 de descuento, y el influencer gana $5 de comisión, que Firmaza
+// le paga a mano en los primeros 5 días del mes siguiente (reporte en
+// /admin/referidos).
+// Reglas (decididas con Ricardo):
+// - La comisión solo se "gana" cuando la notarización se COMPLETA con un
+//   pago real de Square y sin reembolso (ver markReferralEarned). Un pago
+//   reembolsado o una notarización rechazada no genera comisión.
+// - El descuento es solo una vez por correo (primera notarización pagada con
+//   código) — ver db.emailAlreadyUsedReferral.
+// - Un influencer no puede usar su propio código (mismo correo).
+// Igual que PRICE_CATALOG: los montos viven aquí, nunca vienen del cliente.
+const REFERRAL_DISCOUNT_CENTS = 500;
+const REFERRAL_COMMISSION_CENTS = 500;
+const REFERRAL_CODE_RE = /^[A-Z0-9_-]{3,20}$/;
+
+function normalizeReferralCode(raw) {
+  return String(raw || '').trim().toUpperCase();
+}
+
+/** Monto final a cobrar: precio de la sesión menos el descuento de referido
+ * (si hay uno aplicado). Se usa SOLO en /checkout. */
+function chargeForSession(s) {
+  const item = priceForSession(s);
+  const discountCents = s.referral?.discountCents || 0;
+  return {
+    ...item,
+    subtotalCents: item.amountCents,
+    discountCents,
+    amountCents: Math.max(item.amountCents - discountCents, 100),
+    description: discountCents ? `${item.description} (código ${s.referral.code})` : item.description,
+  };
+}
+
+/** Revisa si un código se puede usar en esta sesión. Devuelve
+ * { ok: true, code } o { ok: false, error }. */
+async function validateReferralForSession(s, rawCode) {
+  const codeStr = normalizeReferralCode(rawCode);
+  if (!REFERRAL_CODE_RE.test(codeStr)) return { ok: false, error: 'Código no válido.' };
+  const code = await db.getReferralCode(codeStr);
+  if (!code || !code.active) return { ok: false, error: 'Ese código no existe o ya no está activo.' };
+  if (!s.email) return { ok: false, error: 'Primero escribe tu correo en el primer paso.' };
+  if (code.influencerEmail && code.influencerEmail.toLowerCase() === s.email.toLowerCase()) {
+    return { ok: false, error: 'No puedes usar tu propio código.' };
+  }
+  if (await db.emailAlreadyUsedReferral(s.email, s.id)) {
+    return { ok: false, error: 'El descuento con código es solo para tu primera notarización.' };
+  }
+  return { ok: true, code };
+}
+
+/** Marca la comisión como ganada cuando la notarización queda completada.
+ * Segura de llamar varias veces (solo marca la primera). */
+function markReferralEarned(s) {
+  if (!s.referral || s.referral.earnedAt) return;
+  if (s.payment?.mode !== 'square' || !s.payment?.paidAt || s.payment?.refund) return;
+  s.referral.earnedAt = new Date().toISOString();
+  s.history.push({ event: 'comision_referido_ganada', at: s.referral.earnedAt, code: s.referral.code });
+}
+
 const SESSION_COOKIE = 'firmaza_session';
 function sessionCookieHeader(req, token, maxAgeSeconds) {
   const parts = [
@@ -1276,6 +1350,32 @@ async function handleApi(req, res, pathname, query) {
         return send(res, 200, { session: s });
       }
 
+      // Código de referido (influencer) — ver REFERRAL_DISCOUNT_CENTS.
+      if (sub === '/referral' && (req.method === 'POST' || req.method === 'DELETE')) {
+        if (documentLocked(s)) {
+          return send(res, 409, { error: 'Esta sesión ya está pagada — no se puede cambiar el código.' });
+        }
+        if (req.method === 'DELETE') {
+          s.referral = null;
+          s.history.push({ event: 'codigo_referido_quitado', at: new Date().toISOString() });
+          await txn.saveSession(s);
+          return send(res, 200, { session: s, charge: chargeForSession(s) });
+        }
+        const body = await readBody(req);
+        const check = await validateReferralForSession(s, body.code);
+        if (!check.ok) return send(res, 400, { error: check.error });
+        s.referral = {
+          code: check.code.code,
+          influencerName: check.code.influencerName,
+          discountCents: REFERRAL_DISCOUNT_CENTS,
+          commissionCents: REFERRAL_COMMISSION_CENTS,
+          appliedAt: new Date().toISOString(),
+        };
+        s.history.push({ event: 'codigo_referido_aplicado', at: new Date().toISOString(), code: check.code.code });
+        await txn.saveSession(s);
+        return send(res, 200, { session: s, charge: chargeForSession(s) });
+      }
+
       if (sub === '/verify' && req.method === 'POST') {
         const body = await readBody(req);
         const result = await runIdentityVerification(body);
@@ -1313,7 +1413,18 @@ async function handleApi(req, res, pathname, query) {
         // producto real en el flujo de /app.
         // Incluye firmantes adicionales (ver priceForSession): $39 base,
         // $79 si firman dos personas.
-        const item = priceForSession(s);
+        // Se vuelve a validar el código de referido justo antes de cobrar:
+        // pudo desactivarse, o el mismo correo pudo pagar otra sesión con
+        // código mientras tanto. Si ya no aplica, se quita y se avisa.
+        if (s.referral) {
+          const check = await validateReferralForSession(s, s.referral.code);
+          if (!check.ok) {
+            s.referral = null;
+            await txn.saveSession(s);
+            return send(res, 409, { error: `Quitamos tu código de descuento: ${check.error} Revisa el total y vuelve a intentar.`, session: s });
+          }
+        }
+        const item = chargeForSession(s);
         const amountCents = item.amountCents;
         const origin = trustedOrigin(req);
         try {
@@ -1475,6 +1586,7 @@ async function handleApi(req, res, pathname, query) {
           // de una vez (revisa s.payment.refund antes de hacer nada).
           if (tx?.status === 'completed' || tx?.status === 'released') {
             s.status = 'notarizacion_completada';
+            markReferralEarned(s);
           } else if (tx?.status === 'declined') {
             s.status = 'notarizacion_rechazada';
             await refundSessionIfEligible(s, 'declined');
@@ -1680,6 +1792,7 @@ const server = http.createServer(async (req, res) => {
           match.proof.lastEventAt = new Date().toISOString();
           if (event === 'transaction.completed' || event === 'transaction.released') {
             match.status = 'notarizacion_completada';
+            markReferralEarned(match);
           } else if (event === 'transaction.declined' || event === 'transaction.canceled' || event === 'transaction.expired') {
             match.status = 'notarizacion_rechazada';
             // Reembolso automático solo para 'declined' (no pasó el control
@@ -1760,6 +1873,105 @@ const server = http.createServer(async (req, res) => {
   // donde Ricardo decide reembolsar por su cuenta). Protegido con
   // ADMIN_SECRET, igual que los otros /admin/*: esto mueve dinero real, así
   // que no puede quedar abierto a nadie con el id de la sesión.
+  // --- Programa de referidos: página y API de administración -------------
+  // La página en sí no tiene nada secreto (pide el ADMIN_SECRET al abrirla
+  // y lo manda en cada llamada como x-admin-secret); todos los datos pasan
+  // por las rutas /admin/api/* de abajo, que sí exigen el secreto.
+  if (pathname === '/admin/referidos' && req.method === 'GET') {
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    res.setHeader('Cache-Control', 'no-store');
+    return serveStatic(req, res, path.join(PUBLIC_DIR, 'admin-referidos.html'));
+  }
+  if (pathname.startsWith('/admin/api/referral')) {
+    const adminSecret = process.env.ADMIN_SECRET;
+    const provided = req.headers['x-admin-secret'];
+    if (!adminSecret || !provided || !timingSafeStringEqual(provided, adminSecret)) {
+      return send(res, 401, { error: 'No autorizado' });
+    }
+    try {
+      if (pathname === '/admin/api/referral-codes' && req.method === 'GET') {
+        return send(res, 200, { codes: await db.listReferralCodes() });
+      }
+      if (pathname === '/admin/api/referral-codes' && req.method === 'POST') {
+        const body = await readBody(req);
+        const code = normalizeReferralCode(body.code);
+        if (!REFERRAL_CODE_RE.test(code)) {
+          return send(res, 400, { error: 'El código debe tener de 3 a 20 letras, números, guion o guion bajo (sin espacios).' });
+        }
+        const influencerName = String(body.influencerName || '').trim().slice(0, 120);
+        if (!influencerName) return send(res, 400, { error: 'Falta el nombre del influencer.' });
+        const created = await db.createReferralCode({
+          code,
+          influencerName,
+          influencerEmail: String(body.influencerEmail || '').trim().slice(0, 200),
+          payoutInfo: String(body.payoutInfo || '').trim().slice(0, 200),
+        });
+        if (!created) return send(res, 409, { error: 'Ese código ya existe.' });
+        return send(res, 200, { code: created });
+      }
+      const codeMatch = pathname.match(/^\/admin\/api\/referral-codes\/([A-Za-z0-9_-]{3,20})$/);
+      if (codeMatch && req.method === 'POST') {
+        const body = await readBody(req);
+        const updated = await db.updateReferralCode(codeMatch[1], {
+          active: typeof body.active === 'boolean' ? body.active : undefined,
+          payoutInfo: body.payoutInfo != null ? String(body.payoutInfo).slice(0, 200) : undefined,
+          influencerEmail: body.influencerEmail != null ? String(body.influencerEmail).slice(0, 200) : undefined,
+          influencerName: body.influencerName ? String(body.influencerName).slice(0, 120) : undefined,
+        });
+        if (!updated) return send(res, 404, { error: 'Código no encontrado' });
+        return send(res, 200, { code: updated });
+      }
+      if (pathname === '/admin/api/referral-report' && req.method === 'GET') {
+        const month = u.searchParams.get('month') || '';
+        if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return send(res, 400, { error: 'Mes no válido (usa YYYY-MM).' });
+        const [sessions, payouts, codes] = await Promise.all([
+          db.getEarnedReferralSessions(month),
+          db.getReferralPayouts(month),
+          db.listReferralCodes(),
+        ]);
+        const byCode = new Map();
+        for (const row of sessions) {
+          if (!byCode.has(row.code)) byCode.set(row.code, { code: row.code, referrals: 0, amountCents: 0, sessions: [] });
+          const entry = byCode.get(row.code);
+          entry.referrals += 1;
+          entry.amountCents += row.commissionCents || REFERRAL_COMMISSION_CENTS;
+          entry.sessions.push({ sessionId: row.sessionId, signerName: row.signerName, earnedAt: row.earnedAt });
+        }
+        const codeInfo = new Map(codes.map((c) => [c.code, c]));
+        const payoutByCode = new Map(payouts.map((p) => [p.code, p]));
+        const rows = [...byCode.values()].map((e) => ({
+          ...e,
+          influencerName: codeInfo.get(e.code)?.influencerName || '',
+          influencerEmail: codeInfo.get(e.code)?.influencerEmail || '',
+          payoutInfo: codeInfo.get(e.code)?.payoutInfo || '',
+          payout: payoutByCode.get(e.code) || null,
+        }));
+        return send(res, 200, { month, rows });
+      }
+      if (pathname === '/admin/api/referral-payouts' && req.method === 'POST') {
+        const body = await readBody(req);
+        const month = String(body.month || '');
+        const code = normalizeReferralCode(body.code);
+        if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || !REFERRAL_CODE_RE.test(code)) {
+          return send(res, 400, { error: 'Falta el código o el mes.' });
+        }
+        // El monto se recalcula aquí (no se confía en el navegador).
+        const sessions = (await db.getEarnedReferralSessions(month)).filter((r) => r.code === code);
+        if (!sessions.length) return send(res, 400, { error: 'Ese influencer no tiene comisiones ese mes.' });
+        const amountCents = sessions.reduce((sum, r) => sum + (r.commissionCents || REFERRAL_COMMISSION_CENTS), 0);
+        const saved = await db.markReferralPayoutPaid({
+          code, month, amountCents, referrals: sessions.length, note: String(body.note || '').slice(0, 300),
+        });
+        if (!saved) return send(res, 409, { error: 'Ese pago ya estaba marcado.' });
+        return send(res, 200, { ok: true, amountCents, referrals: sessions.length });
+      }
+      return send(res, 404, { error: 'No encontrado' });
+    } catch (e) {
+      if (e.message === 'PAYLOAD_TOO_LARGE') return send(res, 413, { error: 'Payload demasiado grande' });
+      return send(res, 500, { error: e.message });
+    }
+  }
+
   const refundMatch = pathname.match(/^\/admin\/sessions\/([a-f0-9]+)\/refund$/);
   if (refundMatch && req.method === 'POST') {
     const adminSecret = process.env.ADMIN_SECRET;
