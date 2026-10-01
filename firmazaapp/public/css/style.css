@@ -471,3 +471,6 @@ details[open] .nucleo-toggle .chev{transform:rotate(180deg)}
 .review-ask strong{display:block;font-size:16px;margin-bottom:4px}
 .review-ask p{margin:0 0 12px;color:var(--ink-soft);font-size:14.5px}
 .review-ask .btn-ghost{color:var(--ink);border-color:var(--line);background:var(--bg-raised)}
+.en-note{margin:18px 0 0;font-size:14px;color:var(--hero-ink-soft)}
+.en-note a{color:var(--gold);font-weight:700}
+.en-list strong{display:block;font-size:17px;margin-bottom:6px;font-family:var(--font-display)}

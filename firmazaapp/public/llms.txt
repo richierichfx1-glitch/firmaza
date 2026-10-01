@@ -7,6 +7,7 @@ Firmaza no es un despacho de abogados y no ofrece asesoría legal ni migratoria.
 ## Servicio
 
 - [Inicio](https://firmaza.com/): qué es Firmaza, cómo funciona, precios y preguntas frecuentes
+- [English page](https://firmaza.com/en): Spanish-speaking online notary, in English
 - [Notarizar un documento](https://firmaza.com/app): iniciar una notarización en línea
 - Precios: notarización en línea $39; sello adicional $25; testigo $15; firmante adicional $15
 
