@@ -1,0 +1,26 @@
+# Firmaza
+
+> Firmaza (firmaza.com) es un servicio de notarización remota en línea (RON) en español para la comunidad latina en Estados Unidos. El firmante se conecta por videollamada con un notario público comisionado, verifica su identidad, firma electrónicamente y descarga su documento notarizado. Precio desde $39 USD. Firmaza LLC, Kansas City.
+
+Firmaza no es un despacho de abogados y no ofrece asesoría legal ni migratoria. Un "Notary Public" en EE. UU. no es abogado: solo verifica identidad y presencia firmas. La plataforma pide un notario que hable español, pero no lo garantiza en todas las sesiones. Las notarizaciones se realizan conforme a la ley del estado del notario. Los pagos se procesan con Square y las sesiones remotas se coordinan a través de la red de Proof.com.
+
+## Servicio
+
+- [Inicio](https://firmaza.com/): qué es Firmaza, cómo funciona, precios y preguntas frecuentes
+- [Notarizar un documento](https://firmaza.com/app): iniciar una notarización en línea
+- Precios: notarización en línea $39; sello adicional $25; testigo $15; firmante adicional $15
+
+## Guías
+
+- [Guías de notarización en español](https://firmaza.com/guias)
+- [Carta de permiso de viaje para menores](https://firmaza.com/guias/carta-permiso-viaje-menores)
+- [Poder notarial para México o Latinoamérica](https://firmaza.com/guias/poder-notarial-mexico-latinoamerica)
+- [Poder notarial para Guatemala desde EE. UU.](https://firmaza.com/guias/poder-notarial-guatemala)
+- [Poder notarial para Honduras desde EE. UU.](https://firmaza.com/guias/poder-notarial-honduras)
+- [Notario vs. Notary Public](https://firmaza.com/guias/notario-vs-notary-public)
+
+## Contacto
+
+- Correo: contacto@firmaza.com
+- WhatsApp: +1 (816) 380-9868
+- [Términos](https://firmaza.com/terminos) · [Privacidad](https://firmaza.com/privacidad)
