@@ -467,3 +467,7 @@ details[open] .nucleo-toggle .chev{transform:rotate(180deg)}
 .guide-doc section{padding:0}
 .legal-doc .guide-cta a.btn-primary{color:#fff}
 .legal-doc .guide-cta a.btn-ghost{color:var(--hero-ink)}
+.review-ask{background:var(--bg);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;margin:18px 0}
+.review-ask strong{display:block;font-size:16px;margin-bottom:4px}
+.review-ask p{margin:0 0 12px;color:var(--ink-soft);font-size:14.5px}
+.review-ask .btn-ghost{color:var(--ink);border-color:var(--line);background:var(--bg-raised)}
