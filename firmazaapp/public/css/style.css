@@ -474,3 +474,11 @@ details[open] .nucleo-toggle .chev{transform:rotate(180deg)}
 .en-note{margin:18px 0 0;font-size:14px;color:var(--hero-ink-soft)}
 .en-note a{color:var(--gold);font-weight:700}
 .en-list strong{display:block;font-size:17px;margin-bottom:6px;font-family:var(--font-display)}
+.home-guides{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+.home-guides .guide-card h3{font-size:16.5px}
+.home-guides-more{margin:22px 0 0;font-weight:700}
+.home-guides-more a{color:var(--coral)}
+.guide-related{margin-top:8px}
+.guide-related h2{font-size:21px;margin:0 0 16px}
+@media (max-width:880px){.home-guides{grid-template-columns:1fr 1fr}}
+@media (max-width:520px){.home-guides{grid-template-columns:1fr}}
