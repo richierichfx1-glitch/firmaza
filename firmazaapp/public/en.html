@@ -19,7 +19,11 @@
 <meta name="twitter:card" content="summary_large_image">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<!-- Fuentes sin bloquear la carga: el navegador muestra el texto con la
+     fuente de respaldo y cambia a la de Google cuando termina de llegar. -->
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
 <link rel="stylesheet" href="/css/style.css">
 <script type="application/ld+json">{"@context": "https://schema.org", "@graph": [{"@type": "WebPage", "@id": "https://firmaza.com/en#page", "url": "https://firmaza.com/en", "name": "Spanish-Speaking Online Notary | Firmaza", "inLanguage": "en", "isPartOf": {"@id": "https://firmaza.com/#web"}, "about": {"@id": "https://firmaza.com/#org"}}, {"@type": "Service", "name": "Spanish-speaking online notarization", "serviceType": "Remote online notarization (RON)", "provider": {"@id": "https://firmaza.com/#org"}, "areaServed": {"@type": "Country", "name": "United States"}, "availableLanguage": ["Spanish", "English"], "offers": {"@type": "Offer", "price": "39.00", "priceCurrency": "USD", "url": "https://firmaza.com/app"}}, {"@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Can I get a document notarized online in Spanish?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. With Firmaza you connect by video with a commissioned notary public. The whole platform is in Spanish, and we request a Spanish-speaking notary for your session. We cannot guarantee one in 100% of sessions, because it depends on who is available at that moment."}}, {"@type": "Question", "name": "Is online notarization legally valid?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Remote online notarization (RON) is a legal method of notarization when the notary is commissioned for RON in their state. Online notarizations are generally recognized across the United States. If your document will be used abroad, it may also need an apostille."}}, {"@type": "Question", "name": "How much does it cost?", "acceptedAnswer": {"@type": "Answer", "text": "Online notarization starts at $39. An additional notarial seal is $25, an on-demand witness is $15, and each additional signer is $15. Payment is processed securely by Square."}}, {"@type": "Question", "name": "What do I need for the session?", "acceptedAnswer": {"@type": "Answer", "text": "Your unsigned document (PDF or Word), a valid government-issued photo ID, and a phone or computer with a camera. You will answer a few identity-verification questions before connecting with the notary."}}, {"@type": "Question", "name": "What documents can be notarized online?", "acceptedAnswer": {"@type": "Answer", "text": "Many types: powers of attorney, travel consent letters for minors, affidavits, sworn statements, bills of sale, lease agreements and more, subject to the remote notarization rules of each state."}}, {"@type": "Question", "name": "Is a notary public the same as a lawyer?", "acceptedAnswer": {"@type": "Answer", "text": "No. In the United States, a notary public verifies identity and witnesses signatures. A notary cannot give legal or immigration advice. Firmaza is not a law firm."}}]}]}</script>
 </head>
@@ -40,6 +44,8 @@
     </div>
   </div>
 </header>
+
+<main id="contenido">
 
 <section class="hero">
   <div class="container hero-grid">
@@ -163,6 +169,8 @@
     </div>
   </div>
 </section>
+
+</main>
 
 <footer>
   <div class="container">
