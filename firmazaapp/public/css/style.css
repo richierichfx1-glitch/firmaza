@@ -450,3 +450,20 @@ details[open] .nucleo-toggle .chev{transform:rotate(180deg)}
   .about-grid{grid-template-columns:1fr;gap:24px}
   .about-photo{width:140px;height:140px;font-size:46px}
 }
+
+/* ---------- Guías ---------- */
+.guide-cta{background:var(--hero-bg-1);color:var(--hero-ink);border-radius:var(--radius);padding:24px;margin:32px 0 28px;display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+.guide-cta strong{display:block;width:100%;font-size:18px;font-family:var(--font-display)}
+.guide-cta p{width:100%;margin:0 0 6px;color:var(--hero-ink-soft);font-size:15px}
+.legal-doc .guide-cta a.btn{text-decoration:none}
+.guide-cta .btn-ghost{color:var(--hero-ink);border-color:var(--hero-line)}
+.guide-list{display:grid;gap:16px;margin-bottom:8px}
+.guide-card{display:block;background:var(--bg-raised);border:1px solid var(--line);border-radius:var(--radius);padding:20px 22px;text-decoration:none;color:var(--ink)}
+.legal-doc a.guide-card{text-decoration:none;color:var(--ink)}
+.guide-card h3{margin:0 0 6px;font-size:18px}
+.guide-card p{margin:0 0 10px;font-size:15px;color:var(--ink-soft)}
+.guide-card span{color:var(--coral);font-weight:700;font-size:14px}
+.guide-card:hover{border-color:var(--coral)}
+.guide-doc section{padding:0}
+.legal-doc .guide-cta a.btn-primary{color:#fff}
+.legal-doc .guide-cta a.btn-ghost{color:var(--hero-ink)}
