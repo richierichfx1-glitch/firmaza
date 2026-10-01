@@ -2232,6 +2232,7 @@ const server = http.createServer(async (req, res) => {
     '/cuenta': 'cuenta.html',
     '/terminos': 'terminos.html',
     '/privacidad': 'privacidad.html',
+    '/en': 'en.html',
   };
   // Panel de notario: no está enlazado en ningún lado y vive en una ruta
   // secreta configurable (NOTARY_PANEL_PATH en Render) para que clientes u
