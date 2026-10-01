@@ -216,6 +216,8 @@ footer{background:var(--footer-bg);color:var(--footer-ink);padding:48px 0 28px;m
 footer .disclaimer{background:rgba(0,0,0,.18);border-radius:10px;padding:16px 18px;font-size:14.5px;line-height:1.6;margin-bottom:26px}
 footer .foot-grid{display:flex;justify-content:space-between;flex-wrap:wrap;gap:20px;font-size:13.5px}
 footer a{text-decoration:none;color:var(--footer-ink)}
+/* Acceso discreto al panel de administración: el «©» del pie es el enlace. */
+footer a.foot-admin{color:inherit;cursor:text}
 footer .legal{opacity:.6;font-size:12px;margin-top:24px}
 
 /* ---------- App flow (subir/verificar/pagar/video/firmar) ---------- */
