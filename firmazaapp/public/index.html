@@ -27,7 +27,11 @@
 <meta name="twitter:image" content="https://firmaza.com/img/og-firmaza.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<!-- Fuentes sin bloquear la carga: el navegador muestra el texto con la
+     fuente de respaldo y cambia a la de Google cuando termina de llegar. -->
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
 <link rel="stylesheet" href="/css/style.css">
 <!-- Datos estructurados para Google: quién es Firmaza, el servicio, el precio y las preguntas frecuentes. -->
 <script type="application/ld+json">{"@context": "https://schema.org", "@graph": [{"@type": "Organization", "@id": "https://firmaza.com/#org", "name": "Firmaza", "legalName": "Firmaza LLC", "url": "https://firmaza.com/", "logo": "https://firmaza.com/img/og-firmaza.png", "email": "contacto@firmaza.com", "telephone": "+1-816-380-9868", "founder": {"@type": "Person", "name": "Ricardo Vivas"}, "areaServed": {"@type": "Country", "name": "United States"}, "contactPoint": {"@type": "ContactPoint", "contactType": "customer support", "email": "contacto@firmaza.com", "telephone": "+1-816-380-9868", "availableLanguage": ["Spanish", "English"]}}, {"@type": "WebSite", "@id": "https://firmaza.com/#web", "url": "https://firmaza.com/", "name": "Firmaza", "inLanguage": "es", "publisher": {"@id": "https://firmaza.com/#org"}}, {"@type": "Service", "name": "Notarización en línea en español", "serviceType": "Notarización remota en línea (RON)", "provider": {"@id": "https://firmaza.com/#org"}, "areaServed": {"@type": "Country", "name": "United States"}, "availableLanguage": "Spanish", "url": "https://firmaza.com/", "offers": {"@type": "Offer", "price": "39.00", "priceCurrency": "USD", "url": "https://firmaza.com/app"}}, {"@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "¿Qué es la notarización en línea (RON)?", "acceptedAnswer": {"@type": "Answer", "text": "Tiene los mismos elementos que una notarización tradicional, pero usa tecnología para hacerla más simple: el firmante se presenta ante un notario comisionado mediante audio y video en vivo, en lugar de en persona."}}, {"@type": "Question", "name": "¿Es legalmente válida?", "acceptedAnswer": {"@type": "Answer", "text": "Sí. La notarización en línea es simplemente otro método de notarización, reconocido y válido en los 50 estados cuando el notario está debidamente comisionado para realizar notarizaciones remotas (RON) en su estado."}}, {"@type": "Question", "name": "¿Cómo verifican mi identidad?", "acceptedAnswer": {"@type": "Answer", "text": "Con un proceso de varios factores: preguntas basadas en tu historial (KBA), análisis de autenticidad de tu identificación con foto vigente, y la verificación en vivo del notario durante la videollamada."}}, {"@type": "Question", "name": "¿Quiénes son los notarios de Firmaza?", "acceptedAnswer": {"@type": "Answer", "text": "Son notarios públicos comisionados y verificados, con comisión activa de Notarización Remota en Línea (RON) en su estado. Priorizamos conectarte con un notario que hable español — puedes pedirlo al conectarte — pero no podemos garantizarlo en el 100% de las sesiones, ya que depende de quién esté disponible en ese momento."}}, {"@type": "Question", "name": "¿Pueden firmar varias personas en una sola sesión?", "acceptedAnswer": {"@type": "Answer", "text": "Sí. Los firmantes pueden completar la sesión juntos desde un mismo dispositivo, simultáneamente desde dispositivos distintos, o en sesiones separadas. Cada firmante debe completar su propia verificación de identidad."}}, {"@type": "Question", "name": "¿Qué documentos se pueden notarizar en línea?", "acceptedAnswer": {"@type": "Answer", "text": "Cientos de tipos: poderes notariales, testamentos, fideicomisos, declaraciones juradas, contratos de compraventa, cartas de consentimiento de viaje, contratos de arrendamiento y más — sujeto a las reglas de notarización remota de tu estado."}}]}]}</script>
@@ -39,9 +43,9 @@
     <div class="brand"><span class="dot"></span>Firmaza<small>Notarios de confianza, en tu idioma</small></div>
     <nav class="nav-links">
       <a href="#como-funciona">Cómo funciona</a>
-      <a href="#por-que">Por qué Firmaza</a>
+      <a class="nav-opt" href="#por-que">Por qué Firmaza</a>
       <a href="#precios">Precios</a>
-      <a href="#quienes-somos">Quiénes somos</a>
+      <a class="nav-opt" href="#quienes-somos">Quiénes somos</a>
       <a href="#preguntas">Preguntas</a>
       <a href="/guias">Guías</a>
       <a href="/en" hreflang="en" lang="en">English</a>
@@ -52,6 +56,8 @@
     </div>
   </div>
 </header>
+
+<main id="contenido">
 
 <section class="hero">
   <div class="container hero-grid">
@@ -269,6 +275,8 @@
     </div>
   </div>
 </section>
+
+</main>
 
 <footer>
   <div class="container">

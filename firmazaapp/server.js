@@ -728,7 +728,15 @@ function serveStatic(req, res, filePath) {
   fs.readFile(filePath, (err, data) => {
     if (err) return send(res, 404, { error: 'No encontrado' });
     const ext = path.extname(filePath);
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+    // Caché del navegador: imágenes y fuentes por 30 días; CSS/JS por 1 hora
+    // (cambian seguido y no llevan versión en el nombre); HTML sin caché.
+    const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream' };
+    if (['.png', '.jpg', '.jpeg', '.webp', '.svg', '.ico', '.woff', '.woff2'].includes(ext)) {
+      headers['Cache-Control'] = 'public, max-age=2592000';
+    } else if (ext === '.css' || ext === '.js') {
+      headers['Cache-Control'] = 'public, max-age=3600';
+    }
+    res.writeHead(200, headers);
     res.end(data);
   });
 }
