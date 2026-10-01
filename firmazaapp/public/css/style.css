@@ -321,9 +321,12 @@ details[open] .nucleo-toggle .chev{transform:rotate(180deg)}
    líneas y se vieran desalineados entre sí. Aquí achicamos el espacio y
    escondemos el lema (puramente decorativo) para que todo quede en una
    sola fila prolija hasta donde el menú desaparece por completo. */
-@media (max-width:1180px) and (min-width:881px){
+@media (max-width:1360px) and (min-width:881px){
   .brand small{display:none}
   .nav-links{gap:16px;font-size:13.5px}
+}
+@media (max-width:1120px) and (min-width:881px){
+  .nav-links .nav-opt{display:none}
 }
 
 @media (max-width:880px){
