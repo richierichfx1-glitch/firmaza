@@ -711,6 +711,11 @@ const MIME = {
   '.png': 'image/png',
   '.json': 'application/json',
   '.ico': 'image/x-icon',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.txt': 'text/plain; charset=utf-8',
+  '.xml': 'application/xml; charset=utf-8',
   // Sin esto, los PDF (incluidos los que genera lib/pdf.js) se servían como
   // application/octet-stream y el navegador los descargaba en vez de
   // mostrarlos dentro del <iframe> de vista previa del documento.
@@ -2243,6 +2248,16 @@ const server = http.createServer(async (req, res) => {
   }
   if (routes[pathname]) {
     return serveStatic(req, res, path.join(PUBLIC_DIR, routes[pathname]));
+  }
+
+  // Guías en español (SEO): /guias y /guias/<slug> sin la extensión .html
+  if (pathname === '/guias' || pathname === '/guias/') {
+    return serveStatic(req, res, path.join(PUBLIC_DIR, 'guias', 'index.html'));
+  }
+  const guia = pathname.match(/^\/guias\/([a-z0-9-]+)\/?$/);
+  if (guia) {
+    const guiaPath = path.join(PUBLIC_DIR, 'guias', guia[1] + '.html');
+    if (fs.existsSync(guiaPath)) return serveStatic(req, res, guiaPath);
   }
 
   // Archivos estáticos (css/js/imágenes)
