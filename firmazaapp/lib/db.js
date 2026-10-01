@@ -123,6 +123,22 @@ async function migrate() {
     -- purpose: 'client' (cuenta de cliente) o 'admin' (página /admin/referidos).
     ALTER TABLE magic_links ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'client';
     CREATE INDEX IF NOT EXISTS idx_sessions_referral_code ON sessions ((referral->>'code'));
+    -- Estadísticas del sitio (panel /admin/referidos → pestaña Resumen).
+    -- Sin cookies ni datos personales: visitor es un hash diario de IP +
+    -- navegador (cambia cada día, no se puede revertir a la IP).
+    CREATE TABLE IF NOT EXISTS page_views (
+      id BIGSERIAL PRIMARY KEY,
+      at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      path TEXT NOT NULL,
+      visitor TEXT NOT NULL,
+      referrer_host TEXT NOT NULL DEFAULT '',
+      ref_code TEXT,
+      device TEXT NOT NULL DEFAULT '',
+      load_ms INTEGER,
+      ttfb_ms INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_page_views_at ON page_views (at);
+    CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions (created_at);
   `);
 }
 
@@ -509,8 +525,104 @@ async function markReferralPayoutPaid({ code, month, amountCents, referrals, not
   return rows[0] || null;
 }
 
+// ---------------------------------------------------------------------------
+// Estadísticas (solo administrador)
+// ---------------------------------------------------------------------------
+const TZ = 'America/Chicago';
+
+async function recordPageView({ path, visitor, referrerHost, refCode, device, loadMs, ttfbMs }) {
+  await query(
+    `INSERT INTO page_views (path, visitor, referrer_host, ref_code, device, load_ms, ttfb_ms)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [path, visitor, referrerHost || '', refCode || null, device || '', loadMs ?? null, ttfbMs ?? null]
+  );
+  // Limpieza oportunista: se guardan ~13 meses de visitas.
+  if (Math.random() < 0.01) query("DELETE FROM page_views WHERE at < now() - interval '400 days'").catch(() => {});
+}
+
+async function getSiteStats(days) {
+  const since = `now() - ($1::int * interval '1 day')`;
+  const [traffic, daily, pages, referrers, devices, perf, notarAll, notarRange, statuses, notarDaily, revenue] = await Promise.all([
+    query(`SELECT count(*)::int AS views, count(DISTINCT visitor)::int AS visitors FROM page_views WHERE at >= ${since}`, [days]),
+    query(`SELECT to_char(at AT TIME ZONE '${TZ}', 'YYYY-MM-DD') AS day, count(*)::int AS views, count(DISTINCT visitor)::int AS visitors
+           FROM page_views WHERE at >= ${since} GROUP BY 1 ORDER BY 1`, [days]),
+    query(`SELECT path, count(*)::int AS views FROM page_views WHERE at >= ${since} GROUP BY 1 ORDER BY 2 DESC LIMIT 10`, [days]),
+    query(`SELECT CASE WHEN referrer_host = '' THEN 'Directo / sin origen' ELSE referrer_host END AS source, count(*)::int AS views
+           FROM page_views WHERE at >= ${since} GROUP BY 1 ORDER BY 2 DESC LIMIT 10`, [days]),
+    query(`SELECT device, count(DISTINCT visitor)::int AS visitors FROM page_views WHERE at >= ${since} GROUP BY 1 ORDER BY 2 DESC`, [days]),
+    query(`SELECT count(load_ms)::int AS samples,
+                  round(avg(load_ms))::int AS avg_load,
+                  percentile_cont(0.5) WITHIN GROUP (ORDER BY load_ms)::int AS p50_load,
+                  percentile_cont(0.75) WITHIN GROUP (ORDER BY load_ms)::int AS p75_load,
+                  round(avg(ttfb_ms))::int AS avg_ttfb
+           FROM page_views WHERE at >= ${since} AND load_ms IS NOT NULL AND load_ms BETWEEN 0 AND 120000`, [days]),
+    query(`SELECT count(*) FILTER (WHERE status = 'notarizacion_completada')::int AS completed,
+                  count(*)::int AS sessions FROM sessions`),
+    query(`SELECT count(*)::int AS sessions,
+                  count(*) FILTER (WHERE payment->>'paidAt' IS NOT NULL)::int AS paid,
+                  count(*) FILTER (WHERE status = 'notarizacion_completada')::int AS completed,
+                  count(*) FILTER (WHERE status = 'notarizacion_rechazada')::int AS rejected,
+                  count(*) FILTER (WHERE payment->'refund' IS NOT NULL)::int AS refunded
+           FROM sessions WHERE created_at >= ${since}`, [days]),
+    query(`SELECT status, count(*)::int AS n FROM sessions WHERE created_at >= ${since} GROUP BY 1 ORDER BY 2 DESC`, [days]),
+    query(`SELECT to_char(created_at AT TIME ZONE '${TZ}', 'YYYY-MM-DD') AS day,
+                  count(*)::int AS started,
+                  count(*) FILTER (WHERE status = 'notarizacion_completada')::int AS completed
+           FROM sessions WHERE created_at >= ${since} GROUP BY 1 ORDER BY 1`, [days]),
+    query(`SELECT coalesce(sum((payment->>'amount')::numeric), 0)::float AS dollars
+           FROM sessions WHERE created_at >= ${since} AND payment->>'mode' = 'square'
+             AND payment->>'paidAt' IS NOT NULL AND payment->'refund' IS NULL`, [days]),
+  ]);
+  return {
+    traffic: traffic.rows[0],
+    daily: daily.rows,
+    pages: pages.rows,
+    referrers: referrers.rows,
+    devices: devices.rows,
+    performance: perf.rows[0],
+    notarizations: {
+      allTime: notarAll.rows[0],
+      range: notarRange.rows[0],
+      statuses: statuses.rows,
+      daily: notarDaily.rows,
+      revenueDollars: revenue.rows[0].dollars,
+    },
+  };
+}
+
+// Estadísticas de todos los tiempos por código de referido.
+async function getReferralStats() {
+  const [usage, visits, payouts] = await Promise.all([
+    query(`SELECT referral->>'code' AS code,
+                  count(*)::int AS applied,
+                  count(*) FILTER (WHERE payment->>'paidAt' IS NOT NULL)::int AS paid,
+                  count(*) FILTER (WHERE referral->>'earnedAt' IS NOT NULL AND payment->'refund' IS NULL)::int AS earned,
+                  coalesce(sum((referral->>'commissionCents')::int) FILTER (WHERE referral->>'earnedAt' IS NOT NULL AND payment->'refund' IS NULL), 0)::int AS commission_cents
+           FROM sessions WHERE referral IS NOT NULL GROUP BY 1`),
+    query(`SELECT ref_code AS code, count(DISTINCT visitor)::int AS visitors FROM page_views WHERE ref_code IS NOT NULL GROUP BY 1`),
+    query(`SELECT code, coalesce(sum(amount_cents), 0)::int AS paid_cents FROM referral_payouts GROUP BY 1`),
+  ]);
+  const out = {};
+  const get = (c) => (out[c] ||= { applied: 0, paid: 0, earned: 0, commissionCents: 0, visitors: 0, paidOutCents: 0 });
+  for (const r of usage.rows) Object.assign(get(r.code), { applied: r.applied, paid: r.paid, earned: r.earned, commissionCents: r.commission_cents });
+  for (const r of visits.rows) get(r.code).visitors = r.visitors;
+  for (const r of payouts.rows) get(r.code).paidOutCents = r.paid_cents;
+  return out;
+}
+
+async function pingDb() {
+  const t = Date.now();
+  await query('SELECT 1');
+  return Date.now() - t;
+}
+
 module.exports = {
   migrate,
+  // estadísticas
+  recordPageView,
+  getSiteStats,
+  getReferralStats,
+  pingDb,
   defaultNucleo,
   // sesiones
   getSession,

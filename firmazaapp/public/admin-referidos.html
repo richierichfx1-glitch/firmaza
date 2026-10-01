@@ -4,7 +4,7 @@
 <meta name="robots" content="noindex, nofollow">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Referidos — Firmaza</title>
+<title>Panel — Firmaza</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -25,19 +25,41 @@
   .adm-msg.err{color:#b3261e}.adm-msg.ok{color:var(--ok)}
   .btn-sm{padding:7px 12px;font-size:13px}
   #panel .card{margin-bottom:18px}
+  :root{--chart:#155e5f;--chart-2:#e8583a}
+  @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--chart:#5fb8ad;--chart-2:#f07a5f}}
+  :root[data-theme="dark"]{--chart:#5fb8ad;--chart-2:#f07a5f}
+  #panel > section{padding:0;margin:0}
+  .tabs{display:flex;gap:6px;margin-bottom:18px;border-bottom:1px solid var(--line)}
+  .tab{background:none;border:0;border-bottom:3px solid transparent;padding:10px 14px;font:inherit;font-weight:600;color:var(--ink-soft);cursor:pointer}
+  .tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--coral)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px}
+  .kpi{background:var(--bg-raised);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .kpi .k-label{font-size:12.5px;color:var(--ink-soft);font-weight:600}
+  .kpi .k-val{font-family:var(--font-display);font-size:30px;font-weight:600;line-height:1.15;margin-top:4px}
+  .kpi .k-sub{font-size:12px;color:var(--ink-soft);margin-top:2px}
+  .chart{position:relative;width:100%;height:170px}
+  .chart svg{display:block;width:100%;height:100%}
+  .chart .tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--bg);font-size:12px;padding:5px 8px;border-radius:6px;white-space:nowrap;transform:translate(-50%,-110%);display:none}
+  .chart-axis{display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink-soft);margin-top:4px;font-family:var(--font-mono)}
+  .legend{display:flex;gap:14px;font-size:12.5px;color:var(--ink-soft);margin-bottom:8px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media (max-width:760px){.two-col{grid-template-columns:1fr}}
+  .grade{font-size:12px;font-weight:700;padding:2px 8px;border-radius:999px;border:1px solid currentColor}
+  .grade.good{color:var(--ok)}.grade.mid{color:#b07400}.grade.bad{color:#b3261e}
 </style>
 </head>
 <body>
 <header class="nav">
   <div class="container nav-inner">
-    <a href="/" class="brand" style="text-decoration:none"><span class="dot"></span>Firmaza<small>Referidos</small></a>
+    <a href="/" class="brand" style="text-decoration:none"><span class="dot"></span>Firmaza<small>Panel</small></a>
     <div class="nav-cta"><button class="btn btn-outline btn-sm" id="logoutBtn" style="display:none">Salir</button></div>
   </div>
 </header>
 
 <div class="app-shell" style="max-width:960px">
   <div class="card" id="loginCard">
-    <h2>Administrar referidos</h2>
+    <h2>Panel de administración</h2>
     <p class="help">Escribe tu correo de administrador y te mandamos un enlace para entrar (sin contraseña). El enlace dura 15 minutos.</p>
     <form id="loginForm">
       <div class="field"><label for="adminEmail">Correo</label><input type="email" id="adminEmail" autocomplete="email" placeholder="contacto@firmaza.com" required></div>
@@ -47,6 +69,51 @@
   </div>
 
   <div id="panel" style="display:none">
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" data-tab="resumen" aria-selected="true">Resumen</button>
+      <button class="tab" role="tab" data-tab="referidos" aria-selected="false">Referidos</button>
+    </div>
+
+    <section id="tab-resumen">
+      <div class="adm-row" style="margin-bottom:14px">
+        <label for="range" class="adm-small" style="font-weight:600">Período</label>
+        <select id="range" style="padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg-raised);color:var(--ink);font:inherit">
+          <option value="7">Últimos 7 días</option>
+          <option value="30" selected>Últimos 30 días</option>
+          <option value="90">Últimos 90 días</option>
+          <option value="365">Último año</option>
+        </select>
+        <button class="btn btn-outline btn-sm" id="reloadStats">Actualizar</button>
+        <span class="adm-msg" id="statsMsg" style="margin:0"></span>
+      </div>
+      <div class="kpis" id="kpis"></div>
+
+      <div class="card">
+        <h2>Notarizaciones</h2>
+        <div class="legend"><span><i style="background:var(--chart)"></i>Iniciadas</span><span><i style="background:var(--chart-2)"></i>Completadas</span></div>
+        <div class="chart" id="chartNotar"></div><div class="chart-axis" id="axisNotar"></div>
+        <div class="adm-scroll" style="margin-top:16px"><table class="adm-table" id="statusTable"></table></div>
+      </div>
+
+      <div class="card">
+        <h2>Visitantes por día</h2>
+        <div class="chart" id="chartVisits"></div><div class="chart-axis" id="axisVisits"></div>
+      </div>
+
+      <div class="card">
+        <h2>Rendimiento del sitio</h2>
+        <p class="help">Tiempo real que tarda la página en cargar en el navegador de tus visitantes, y el estado del servidor ahora mismo.</p>
+        <div class="kpis" id="perf" style="margin:14px 0 0"></div>
+      </div>
+
+      <div class="two-col">
+        <div class="card"><h2>De dónde llegan</h2><table class="adm-table" id="refTable"></table></div>
+        <div class="card"><h2>Páginas más vistas</h2><table class="adm-table" id="pagesTable"></table>
+          <h2 style="margin-top:22px;font-size:18px">Dispositivo</h2><table class="adm-table" id="devTable"></table></div>
+      </div>
+    </section>
+
+    <section id="tab-referidos" style="display:none">
     <div class="card">
       <h2>Comisiones por mes</h2>
       <p class="help">Se cuenta $5 por cada cliente que usó el código, pagó y completó su notarización (sin reembolso). Paga los primeros 5 días del mes siguiente.</p>
@@ -71,7 +138,9 @@
         <div class="adm-msg" id="createMsg"></div>
       </form>
       <div class="adm-scroll" style="margin-top:18px"><table class="adm-table" id="codesTable"></table></div>
+      <p class="adm-small" style="margin-top:10px">Visitas: personas que entraron con el enlace del código. Usado: aplicaron el código. Completadas: pagaron y terminaron su notarización (cuentan para comisión).</p>
     </div>
+    </section>
   </div>
 </div>
 
@@ -103,16 +172,142 @@ function previousMonth() {
 }
 
 async function loadCodes() {
-  const { codes } = await adminApi('/admin/api/referral-codes');
+  const [{ codes }, { stats }] = await Promise.all([
+    adminApi('/admin/api/referral-codes'),
+    adminApi('/admin/api/referral-stats').catch(() => ({ stats: {} })),
+  ]);
+  const st = (c) => stats[c] || { visitors: 0, applied: 0, paid: 0, earned: 0, commissionCents: 0, paidOutCents: 0 };
   $('#codesTable').innerHTML = codes.length ? `
-    <tr><th>Código</th><th>Influencer</th><th>Pago</th><th>Enlace</th><th></th></tr>
-    ${codes.map((c) => `<tr>
+    <tr><th>Código</th><th>Influencer</th><th>Visitas</th><th>Usado</th><th>Pagado</th><th>Completadas</th><th>Comisión ganada</th><th>Ya pagado</th><th>Enlace</th><th></th></tr>
+    ${codes.map((c) => { const x = st(c.code); return `<tr>
       <td class="num">${esc(c.code)}${c.active ? '' : ' <span class="pill-off">(inactivo)</span>'}</td>
-      <td>${esc(c.influencerName)}<div class="adm-small">${esc(c.influencerEmail)}</div></td>
-      <td>${esc(c.payoutInfo)}</td>
+      <td>${esc(c.influencerName)}<div class="adm-small">${esc(c.influencerEmail)}</div><div class="adm-small">${esc(c.payoutInfo)}</div></td>
+      <td class="num">${x.visitors}</td>
+      <td class="num">${x.applied}</td>
+      <td class="num">${x.paid}</td>
+      <td class="num"><strong>${x.earned}</strong></td>
+      <td class="num">${money(x.commissionCents)}</td>
+      <td class="num">${money(x.paidOutCents)}${x.commissionCents > x.paidOutCents ? `<div class="adm-small">Debe ${money(x.commissionCents - x.paidOutCents)}</div>` : ''}</td>
       <td class="adm-small">${esc(location.origin)}/?ref=${esc(c.code)}</td>
       <td><button class="btn btn-outline btn-sm" data-toggle="${esc(c.code)}" data-active="${c.active}">${c.active ? 'Desactivar' : 'Activar'}</button></td>
-    </tr>`).join('')}` : '<tr><td class="adm-small">Todavía no hay códigos.</td></tr>';
+    </tr>`; }).join('')}` : '<tr><td class="adm-small">Todavía no hay códigos.</td></tr>';
+}
+
+// ---------------- Resumen (estadísticas generales) ----------------
+const STATUS_LABELS = {
+  iniciada: 'Iniciada (sin documento)',
+  documento_subido: 'Documento subido',
+  identidad_verificada: 'Identidad verificada',
+  pagado_demo: 'Pagado (modo prueba)',
+  pagado_square: 'Pagado',
+  enviado_a_notario_proof: 'Enviada al notario',
+  en_reunion_con_notario: 'En videollamada',
+  en_sesion_con_notario: 'En sesión con notario',
+  firmado: 'Firmada',
+  notarizacion_completada: 'Completada',
+  notarizacion_rechazada: 'Rechazada',
+};
+const fmt = (n) => Number(n || 0).toLocaleString('es-US');
+const secs = (ms) => (ms == null ? '—' : `${(ms / 1000).toFixed(1)} s`);
+function grade(ms) {
+  if (ms == null) return '';
+  if (ms <= 2500) return '<span class="grade good">Rápido</span>';
+  if (ms <= 4500) return '<span class="grade mid">Regular</span>';
+  return '<span class="grade bad">Lento</span>';
+}
+function uptime(s) {
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  return d ? `${d} d ${h} h` : h ? `${h} h ${m} min` : `${m} min`;
+}
+function kpi(label, value, sub) {
+  return `<div class="kpi"><div class="k-label">${esc(label)}</div><div class="k-val">${value}</div>${sub ? `<div class="k-sub">${sub}</div>` : ''}</div>`;
+}
+function dayList(days) {
+  const out = [];
+  const fmtDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' });
+  for (let i = days - 1; i >= 0; i--) out.push(fmtDay.format(new Date(Date.now() - i * 86400000)));
+  return out;
+}
+const shortDay = (d) => new Date(d + 'T12:00:00').toLocaleDateString('es-US', { day: 'numeric', month: 'short' });
+
+// Barras por día (una o dos series lado a lado) con tooltip al pasar el mouse.
+function barChart(el, axisEl, days, series) {
+  const W = 600, H = 170, padTop = 8;
+  const max = Math.max(1, ...series.flatMap((s) => days.map((d) => s.values[d] || 0)));
+  const slot = W / days.length, gap = Math.min(2, slot * 0.2);
+  const barW = Math.max(1, (slot - gap * (series.length + 1)) / series.length);
+  let bars = '';
+  days.forEach((d, i) => {
+    series.forEach((s, j) => {
+      const v = s.values[d] || 0; const h = v ? Math.max(2, (v / max) * (H - padTop)) : 0;
+      const x = i * slot + gap + j * (barW + gap);
+      if (h) bars += `<rect x="${x.toFixed(1)}" y="${(H - h).toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="${Math.min(3, barW / 2)}" fill="${s.color}"/>`;
+    });
+    bars += `<rect class="hit" data-i="${i}" x="${(i * slot).toFixed(1)}" y="0" width="${slot.toFixed(1)}" height="${H}" fill="transparent"/>`;
+  });
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Gráfica por día">
+    <line x1="0" y1="${H - 0.5}" x2="${W}" y2="${H - 0.5}" stroke="var(--line)"/>
+    <text x="2" y="12" font-size="11" fill="var(--ink-soft)">${fmt(max)}</text>${bars}</svg><div class="tip"></div>`;
+  axisEl.innerHTML = `<span>${shortDay(days[0])}</span><span>${shortDay(days[days.length - 1])}</span>`;
+  const tip = el.querySelector('.tip');
+  el.querySelector('svg').addEventListener('mousemove', (ev) => {
+    const r = ev.target.closest('.hit'); if (!r) return;
+    const d = days[r.dataset.i];
+    tip.innerHTML = `<strong>${shortDay(d)}</strong> · ${series.map((s) => `${s.name}: ${fmt(s.values[d] || 0)}`).join(' · ')}`;
+    const box = el.getBoundingClientRect();
+    tip.style.left = `${Math.min(Math.max(ev.clientX - box.left, 60), box.width - 60)}px`; tip.style.top = `${ev.clientY - box.top}px`; tip.style.display = 'block';
+  });
+  el.querySelector('svg').addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+}
+function rowsTable(el, head, rows) {
+  el.innerHTML = rows.length ? `<tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr>${rows.map((r) => `<tr>${r.map((c, i) => `<td${i ? ' class="num"' : ''}>${c}</td>`).join('')}</tr>`).join('')}`
+    : '<tr><td class="adm-small">Todavía no hay datos en este período.</td></tr>';
+}
+
+async function loadStats() {
+  const days = Number($('#range').value);
+  msg($('#statsMsg'), 'Cargando…');
+  try {
+    const d = await adminApi(`/admin/api/stats?days=${days}`);
+    const n = d.notarizations, r = n.range, t = d.traffic;
+    const conv = t.visitors ? ((r.completed / t.visitors) * 100).toFixed(1) + '%' : '—';
+    $('#kpis').innerHTML = [
+      kpi('Notarizaciones completadas', fmt(n.allTime.completed), 'Desde el inicio'),
+      kpi('Completadas en el período', fmt(r.completed), `${fmt(r.sessions)} iniciadas · ${fmt(r.paid)} pagadas`),
+      kpi('Ingresos (Square)', `$${Number(n.revenueDollars || 0).toLocaleString('es-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 'Pagos sin reembolso en el período'),
+      kpi('Visitantes únicos', fmt(t.visitors), `${fmt(t.views)} páginas vistas`),
+      kpi('Conversión', conv, 'Visitantes que completaron'),
+    ].join('');
+
+    const dl = dayList(days);
+    const started = {}, completed = {}, visitors = {};
+    n.daily.forEach((x) => { started[x.day] = x.started; completed[x.day] = x.completed; });
+    d.daily.forEach((x) => { visitors[x.day] = x.visitors; });
+    barChart($('#chartNotar'), $('#axisNotar'), dl, [
+      { name: 'Iniciadas', color: 'var(--chart)', values: started },
+      { name: 'Completadas', color: 'var(--chart-2)', values: completed },
+    ]);
+    barChart($('#chartVisits'), $('#axisVisits'), dl, [{ name: 'Visitantes', color: 'var(--chart)', values: visitors }]);
+
+    rowsTable($('#statusTable'), ['Estado de las sesiones del período', 'Cantidad'],
+      n.statuses.map((x) => [esc(STATUS_LABELS[x.status] || x.status), fmt(x.n)])
+        .concat(r.refunded ? [['Con reembolso', fmt(r.refunded)]] : []));
+
+    const p = d.performance, s = d.server;
+    $('#perf').innerHTML = [
+      kpi('Carga promedio', secs(p.avg_load), `${grade(p.avg_load)}<div>${p.samples ? fmt(p.samples) + ' mediciones' : 'Sin mediciones aún'}</div>`),
+      kpi('Carga típica (mediana)', secs(p.p50_load), grade(p.p50_load)),
+      kpi('3 de cada 4 cargan en', secs(p.p75_load), grade(p.p75_load)),
+      kpi('Respuesta del servidor', p.avg_ttfb == null ? '—' : `${fmt(p.avg_ttfb)} ms`, 'Tiempo al primer byte'),
+      kpi('Servidor encendido', uptime(s.uptimeSeconds), `Memoria ${s.memoryMb} MB`),
+      kpi('Base de datos', `${s.dbPingMs} ms`, 'Tiempo de respuesta ahora'),
+    ].join('');
+
+    rowsTable($('#refTable'), ['Origen', 'Vistas'], d.referrers.map((x) => [esc(x.source), fmt(x.views)]));
+    rowsTable($('#pagesTable'), ['Página', 'Vistas'], d.pages.map((x) => [esc(x.path), fmt(x.views)]));
+    rowsTable($('#devTable'), ['Dispositivo', 'Visitantes'], d.devices.map((x) => [esc(x.device), fmt(x.visitors)]));
+    msg($('#statsMsg'), `Actualizado ${new Date().toLocaleTimeString('es-US', { hour: 'numeric', minute: '2-digit' })}`);
+  } catch (e) { msg($('#statsMsg'), e.message, 'err'); }
 }
 
 async function loadReport() {
@@ -144,7 +339,16 @@ async function enter() {
   $('#loginCard').style.display = 'none'; $('#panel').style.display = ''; $('#logoutBtn').style.display = '';
   $('#month').value = previousMonth();
   loadReport();
+  loadStats();
 }
+
+document.querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+  $('#tab-resumen').style.display = b.dataset.tab === 'resumen' ? '' : 'none';
+  $('#tab-referidos').style.display = b.dataset.tab === 'referidos' ? '' : 'none';
+}));
+$('#range').addEventListener('change', loadStats);
+$('#reloadStats').addEventListener('click', loadStats);
 
 $('#loginForm').addEventListener('submit', async (ev) => {
   ev.preventDefault();

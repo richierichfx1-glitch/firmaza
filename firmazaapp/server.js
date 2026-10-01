@@ -58,6 +58,9 @@
  *   POST /admin/api/referral-codes/:code -> activa/desactiva o edita un código (ADMIN_SECRET)
  *   GET  /admin/api/referral-report?month=YYYY-MM -> cuánto se le debe a cada influencer ese mes (ADMIN_SECRET)
  *   POST /admin/api/referral-payouts    -> marca como pagada la comisión de un influencer para un mes (ADMIN_SECRET)
+ *   GET  /admin/api/referral-stats      -> uso de cada código desde el inicio (visitas, aplicados, pagados, completados)
+ *   GET  /admin/api/stats?days=30       -> visitas, rendimiento del sitio y notarizaciones (admin)
+ *   POST /api/t                         -> beacon de visita (público, sin cookies) para las estadísticas
  *   GET  /uploads/:id               -> sirve un archivo guardado en la base de datos (documento/firma)
  *
  *   -- Acceso del panel de notario (/notario) --
@@ -358,6 +361,32 @@ async function isAdminRequest(req) {
   const provided = req.headers['x-admin-secret'];
   if (adminSecret && provided && timingSafeStringEqual(provided, adminSecret)) return true;
   return !!(await getAdminFromRequest(req));
+}
+
+// ---------------------------------------------------------------------------
+// Estadísticas del sitio (visitas y rendimiento) — sin cookies ni Google
+// Analytics. Cada página pública manda un "beacon" a POST /api/t al cargar,
+// con la ruta, el origen y el tiempo de carga. El visitante se identifica
+// con un hash diario (IP + navegador + fecha + sal), que no se puede
+// revertir y cambia cada día. Se ve en /admin/referidos → Resumen.
+// ---------------------------------------------------------------------------
+const SERVER_STARTED_AT = Date.now();
+const BOT_UA_RE = /bot|crawl|spider|slurp|facebookexternalhit|preview|headless|lighthouse|pingdom|uptime|monitor|curl|wget|python|axios|node-fetch/i;
+function statsVisitorHash(req) {
+  const ip = String(req.headers['cf-connecting-ip'] || (req.headers['x-forwarded-for'] || '').split(',')[0] || req.socket.remoteAddress || '').trim();
+  const ua = String(req.headers['user-agent'] || '');
+  const day = new Date().toISOString().slice(0, 10);
+  const salt = process.env.STATS_SALT || process.env.ADMIN_SECRET || 'firmaza-stats';
+  return crypto.createHash('sha256').update(`${salt}|${day}|${ip}|${ua}`).digest('hex').slice(0, 24);
+}
+function statsDevice(ua) {
+  if (/iPad|Tablet/i.test(ua)) return 'Tablet';
+  if (/Mobi|Android|iPhone/i.test(ua)) return 'Celular';
+  return 'Computadora';
+}
+function statsMs(v) {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) && n >= 0 && n <= 120000 ? n : null;
 }
 
 const SESSION_COOKIE = 'firmaza_session';
@@ -1010,6 +1039,35 @@ function sanitizeUploadContentType(candidate) {
 }
 
 async function handleApi(req, res, pathname, query) {
+  // --- Estadísticas: beacon de visita (ver statsVisitorHash) -------------
+  if (pathname === '/api/t' && req.method === 'POST') {
+    try {
+      const ua = String(req.headers['user-agent'] || '');
+      if (!ua || BOT_UA_RE.test(ua)) return send(res, 204, '');
+      const body = await readBody(req);
+      const pagePath = String(body.path || '');
+      if (!/^\/[A-Za-z0-9/_\-.]{0,120}$/.test(pagePath) || pagePath.startsWith('/admin')) return send(res, 204, '');
+      let referrerHost = '';
+      try {
+        const host = new URL(String(body.referrer || '')).hostname.replace(/^www\./, '').toLowerCase();
+        if (host && !/(^|\.)firmaza\.com$/.test(host)) referrerHost = host.slice(0, 100);
+      } catch { /* sin origen */ }
+      const refCode = normalizeReferralCode(body.ref);
+      await db.recordPageView({
+        path: pagePath,
+        visitor: statsVisitorHash(req),
+        referrerHost,
+        refCode: REFERRAL_CODE_RE.test(refCode) ? refCode : null,
+        device: statsDevice(ua),
+        loadMs: statsMs(body.loadMs),
+        ttfbMs: statsMs(body.ttfbMs),
+      });
+    } catch (e) {
+      console.error('[stats] No se pudo guardar la visita:', e.message);
+    }
+    return send(res, 204, '');
+  }
+
   // --- Cuentas de cliente (enlace mágico, sin contraseña) --------------
   if (pathname === '/api/auth/request-link' && req.method === 'POST') {
     const body = await readBody(req);
@@ -1915,6 +1973,31 @@ const server = http.createServer(async (req, res) => {
   // La página en sí no tiene nada secreto (pide el ADMIN_SECRET al abrirla
   // y lo manda en cada llamada como x-admin-secret); todos los datos pasan
   // por las rutas /admin/api/* de abajo, que sí exigen el secreto.
+  // Atajo: /admin lleva al panel (el enlace discreto del pie de página).
+  if ((pathname === '/admin' || pathname === '/admin/') && req.method === 'GET') {
+    res.writeHead(302, { Location: '/admin/referidos', 'X-Robots-Tag': 'noindex, nofollow' });
+    return res.end();
+  }
+  // Estadísticas generales del sitio (visitas, rendimiento, notarizaciones).
+  if (pathname === '/admin/api/stats' && req.method === 'GET') {
+    if (!(await isAdminRequest(req))) return send(res, 401, { error: 'No autorizado' });
+    try {
+      const days = Math.min(Math.max(parseInt(u.searchParams.get('days'), 10) || 30, 1), 365);
+      const [stats, dbPingMs] = await Promise.all([db.getSiteStats(days), db.pingDb()]);
+      return send(res, 200, {
+        days,
+        ...stats,
+        server: {
+          uptimeSeconds: Math.round((Date.now() - SERVER_STARTED_AT) / 1000),
+          memoryMb: Math.round(process.memoryUsage().rss / 1048576),
+          dbPingMs,
+          node: process.version,
+        },
+      }, { 'Cache-Control': 'no-store' });
+    } catch (e) {
+      return send(res, 500, { error: e.message });
+    }
+  }
   if (pathname === '/admin/referidos' && req.method === 'GET') {
     res.setHeader('X-Robots-Tag', 'noindex, nofollow');
     res.setHeader('Cache-Control', 'no-store');
@@ -1982,6 +2065,9 @@ const server = http.createServer(async (req, res) => {
       return send(res, 401, { error: 'No autorizado' });
     }
     try {
+      if (pathname === '/admin/api/referral-stats' && req.method === 'GET') {
+        return send(res, 200, { stats: await db.getReferralStats() });
+      }
       if (pathname === '/admin/api/referral-codes' && req.method === 'GET') {
         return send(res, 200, { codes: await db.listReferralCodes() });
       }
