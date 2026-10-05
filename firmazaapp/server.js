@@ -724,10 +724,34 @@ const MIME = {
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 };
 
+// Contenido programado (para publicar guías en una fecha futura sin volver
+// a subir archivos):
+//  - Un archivo con <!--publish-at:2026-10-08T14:00:00Z--> responde 404
+//    hasta esa fecha.
+//  - Un bloque <!--pub:2026-10-08T14:00:00Z--> ... <!--/pub--> dentro de
+//    HTML, XML o TXT se oculta hasta esa fecha. Después se muestra y se
+//    quitan las marcas.
+function applySchedule(text, now = Date.now()) {
+  const gate = text.match(/<!--publish-at:([^>]+?)-->/);
+  if (gate && now < Date.parse(gate[1])) return null;
+  return text
+    .replace(/<!--publish-at:[^>]+?-->\n?/g, '')
+    .replace(/<!--pub:([^>]+?)-->([\s\S]*?)<!--\/pub-->\n?/g,
+      (m, when, inner) => (now < Date.parse(when) ? '' : inner));
+}
+
 function serveStatic(req, res, filePath) {
   fs.readFile(filePath, (err, data) => {
     if (err) return send(res, 404, { error: 'No encontrado' });
     const ext = path.extname(filePath);
+    if (ext === '.html' || ext === '.xml' || ext === '.txt') {
+      const text = data.toString('utf8');
+      if (text.includes('<!--pub') ) {
+        const out = applySchedule(text);
+        if (out === null) return send(res, 404, { error: 'Página no encontrada' });
+        data = Buffer.from(out, 'utf8');
+      }
+    }
     // Caché del navegador: imágenes y fuentes por 30 días; CSS/JS por 1 hora
     // (cambian seguido y no llevan versión en el nombre); HTML sin caché.
     const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream' };
