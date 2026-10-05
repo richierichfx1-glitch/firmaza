@@ -141,7 +141,7 @@ header.nav{
 .hero-art .online-tag-dot{width:6px;height:6px;border-radius:50%;background:#3ddc84;flex:none}
 .hero-art .meta{font-size:12px;color:var(--ink-soft)}
 .trustbar{background:var(--hero-bg-2);border-top:1px solid var(--hero-line)}
-.trustbar .container{display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px;padding:18px 24px;font-weight:700;font-size:14px;color:var(--hero-ink)}
+.trustbar .container{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:18px 24px;font-weight:700;font-size:13px;color:var(--hero-ink)}
 .trustbar span{opacity:.85}
 
 /* ---------- Franja de banderas ----------
