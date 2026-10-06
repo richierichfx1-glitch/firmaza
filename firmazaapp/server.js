@@ -91,6 +91,7 @@ const { renderPdf } = require('./lib/pdf');
 const docTemplates = require('./lib/documentTemplates');
 const { translateFields } = require('./lib/translate');
 const db = require('./lib/db');
+const nameLib = require('./lib/names');
 
 const PORT = process.env.PORT || 8080;
 // Ruta del panel de notario (ver "Rutas de páginas" más abajo).
@@ -685,6 +686,24 @@ function readBody(req) {
 // antes de que el notario lo revisara, reemplazarlo por otro distinto.
 function documentLocked(s) {
   return Boolean(s.payment?.paidAt || s.proof?.transactionId || s.status === 'notarizacion_completada');
+}
+
+// Guarda el nombre del firmante en la sesión. El cliente nuevo manda
+// body.signerNameParts ({first, middle, last}); un cliente viejo solo manda
+// body.signerName (texto libre). Devuelve un mensaje de error (para un 400) o null.
+function applySignerName(s, body) {
+  if (body.signerNameParts != null) {
+    const parts = nameLib.normalizeNameParts(body.signerNameParts);
+    const error = nameLib.validateNameParts(parts);
+    if (error) return error;
+    s.signerNameParts = parts;
+    s.signerName = nameLib.joinNameParts(parts);
+  } else if (body.signerName) {
+    const name = String(body.signerName).slice(0, MAX_FIELD_LENGTH);
+    if (name !== s.signerName) s.signerNameParts = null;
+    s.signerName = name;
+  }
+  return null;
 }
 
 // Tope de longitud por campo para lo que termina convertido en PDF — el
@@ -1331,6 +1350,8 @@ async function handleApi(req, res, pathname, query) {
           return send(res, 409, { error: 'Esta sesión ya está pagada/notarizada — no se puede reemplazar el documento.' });
         }
         const body = await readBody(req);
+        const nameError = applySignerName(s, body);
+        if (nameError) return send(res, 400, { error: nameError });
         if (!body.filename || !body.base64) return send(res, 400, { error: 'Falta filename o base64' });
         const dataUriMatch = /^data:([^;]+);base64,/.exec(body.base64);
         const contentType = sanitizeUploadContentType(dataUriMatch ? dataUriMatch[1] : guessContentType(body.filename));
@@ -1341,7 +1362,6 @@ async function handleApi(req, res, pathname, query) {
         // El nombre/correo del firmante se capturan en este mismo paso del flujo
         // (paso 0 en app.js); los guardamos aquí porque /api/sessions se crea
         // antes de que el usuario los escriba.
-        if (body.signerName) s.signerName = body.signerName;
         if (body.email) s.email = body.email;
         s.status = 'documento_subido';
         s.history.push({ event: 'documento_subido', at: new Date().toISOString() });
@@ -1359,6 +1379,9 @@ async function handleApi(req, res, pathname, query) {
           return send(res, 409, { error: 'Esta sesión ya está pagada/notarizada — no se puede reemplazar el documento.' });
         }
         const body = await readBody(req);
+        // Antes de renderizar: la carta personalizada usa s.signerName como autor.
+        const nameError = applySignerName(s, body);
+        if (nameError) return send(res, 400, { error: nameError });
         // renderFor(lang, tr) → bloques del PDF en ese idioma. Ver
         // "IDIOMAS" en lib/documentTemplates.js.
         let renderFor, docTitle, templateId = null, inputs = null;
@@ -1474,7 +1497,6 @@ async function handleApi(req, res, pathname, query) {
           // Para mostrar el total correcto en el paso de pago (el cobro real
           // lo vuelve a calcular /checkout del lado del servidor).
           s.document.price = priceForSession(s);
-          if (body.signerName) s.signerName = body.signerName;
           if (body.email) s.email = body.email;
           s.status = 'documento_subido';
           s.history.push({ event: 'documento_preparado_por_firmaza', at: new Date().toISOString(), mode: body.mode, templateId });
@@ -1715,6 +1737,7 @@ async function handleApi(req, res, pathname, query) {
           const result = await proofRon.createRonSession({
             sessionId: id,
             signerName: s.signerName,
+            signerNameParts: s.signerNameParts,
             signerEmail: s.email,
             documentUrl,
             // Otros firmantes del mismo documento (p. ej. el otro padre/madre

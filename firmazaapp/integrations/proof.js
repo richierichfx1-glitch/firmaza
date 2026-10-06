@@ -39,14 +39,11 @@
  */
 
 const PROOF_BASE_URL = (process.env.PROOF_API_BASE_URL || 'https://api.proof.com/v1').replace(/\/$/, '');
+const names = require('../lib/names');
 const PROOF_BASE_URL_V2 = PROOF_BASE_URL.replace(/\/v1$/, '/v2');
 
 function splitName(fullName) {
-    const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
-    if (!parts.length) return {};
-    const first_name = parts[0];
-    const last_name = parts.length > 1 ? parts.slice(1).join(' ') : undefined;
-    return last_name ? { first_name, last_name } : { first_name };
+    return names.toProofName(names.splitFullName(fullName));
 }
 
 async function proofFetch(url, { apiKey, method = 'GET', body } = {}) {
@@ -92,14 +89,18 @@ const DEFAULT_SIGNER_MESSAGE =
  * bluenotary.js / notarycam.js, para que server.js pueda usar su flujo propio
  * (WebRTC) como respaldo mientras no haya credenciales.
  */
-async function createRonSession({ sessionId, signerName, signerEmail, signerPhone, documentUrl, message, subject, additionalSigners = [] }) {
+async function createRonSession({ sessionId, signerName, signerNameParts, signerEmail, signerPhone, documentUrl, message, subject, additionalSigners = [] }) {
     const apiKey = process.env.PROOF_API_KEY;
     if (!apiKey) return null;
 
   if (!signerEmail) throw new Error('Proof.com requiere el correo del firmante para crear la transacción.');
     if (!documentUrl) throw new Error('Proof.com requiere una URL pública del documento a notarizar.');
 
-  const signer = { email: signerEmail, ...splitName(signerName) };
+  // Si el cliente ya separó nombre / segundo nombre / apellidos, se mandan tal
+  // cual (Proof acepta middle_name); si no, se adivina con splitName.
+  const parts = names.normalizeNameParts(signerNameParts);
+  const signerNames = parts && parts.first && parts.last ? names.toProofName(parts) : splitName(signerName);
+  const signer = { email: signerEmail, ...signerNames };
     if (signerPhone) signer.phone_number = signerPhone;
 
   // Firmantes adicionales (p. ej. el otro padre/madre en el permiso de viaje).

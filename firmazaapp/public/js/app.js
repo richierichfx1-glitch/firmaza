@@ -57,7 +57,7 @@ async function ensureSession() {
   // Si el cliente tiene sesión iniciada (cuenta con núcleo guardado), el
   // servidor ya prellenó signerName/email al crear la sesión — reflejarlo
   // también en el formulario para que no tenga que volver a escribirlos.
-  if (session.signerName) $('#signerName').value = session.signerName;
+  fillNameFields(session);
   if (session.email) $('#signerEmail').value = session.email;
 }
 
@@ -325,6 +325,33 @@ function clearErrors() {
   $('#errTemplate').classList.remove('show');
 }
 
+// Misma lógica que splitFullName() en lib/names.js (el servidor no se
+// comparte con el navegador): agrupa partículas con la palabra siguiente.
+const NAME_PARTICLES = new Set(['de', 'del', 'la', 'las', 'los', 'y', 'e', 'da', 'das', 'do', 'dos', 'di', 'van', 'von', 'san', 'santa']);
+function guessNameParts(full) {
+  const blocks = [];
+  let pending = [];
+  for (const w of String(full || '').trim().split(/\s+/).filter(Boolean)) {
+    pending.push(w);
+    if (!NAME_PARTICLES.has(w.toLowerCase())) { blocks.push(pending.join(' ')); pending = []; }
+  }
+  if (pending.length) blocks.push(pending.join(' '));
+  if (!blocks.length) return { first: '', middle: '', last: '' };
+  if (blocks.length === 1) return { first: blocks[0], middle: '', last: '' };
+  if (blocks.length >= 4) return { first: blocks[0], middle: blocks.slice(1, -2).join(' '), last: blocks.slice(-2).join(' ') };
+  return { first: blocks[0], middle: '', last: blocks.slice(1).join(' ') };
+}
+
+// Prellena los tres campos desde la sesión; si solo hay signerName (p. ej. el
+// núcleo de la cuenta) se adivina la separación para que el cliente la corrija.
+function fillNameFields(sess) {
+  const p = sess.signerNameParts || (sess.signerName ? guessNameParts(sess.signerName) : null);
+  if (!p) return;
+  $('#signerFirst').value = p.first || '';
+  $('#signerMiddle').value = p.middle || '';
+  $('#signerLast').value = p.last || '';
+}
+
 function markFieldError(wrapSelector, errSelector, msg) {
   const wrap = wrapSelector ? $(wrapSelector) : null;
   const err = errSelector ? $(errSelector) : null;
@@ -355,13 +382,23 @@ function setPreparingState() {
 
 $('#toStep1').addEventListener('click', async () => {
   clearErrors();
-  const name = $('#signerName').value.trim();
+  const nameParts = {
+    first: $('#signerFirst').value.trim().replace(/\s+/g, ' '),
+    middle: $('#signerMiddle').value.trim().replace(/\s+/g, ' '),
+    last: $('#signerLast').value.trim().replace(/\s+/g, ' '),
+  };
+  const name = [nameParts.first, nameParts.middle, nameParts.last].filter(Boolean).join(' ');
   const email = $('#signerEmail').value.trim();
   let hasError = false;
-  if (!name) { markFieldError('#fieldSignerName', '#errSignerName', 'Escribe tu nombre completo.'); hasError = true; }
+  if (!nameParts.first) { markFieldError('#fieldSignerFirst', '#errSignerFirst', 'Escribe tu nombre.'); hasError = true; }
+  if (!nameParts.last) { markFieldError('#fieldSignerLast', '#errSignerLast', 'Escribe tus apellidos.'); hasError = true; }
+  for (const [k, sel, err] of [['first', '#fieldSignerFirst', '#errSignerFirst'], ['middle', '#fieldSignerMiddle', '#errSignerMiddle'], ['last', '#fieldSignerLast', '#errSignerLast']]) {
+    if (nameParts[k].length > 30) { markFieldError(sel, err, 'Máximo 30 caracteres.'); hasError = true; }
+  }
   if (!email) { markFieldError('#fieldSignerEmail', '#errSignerEmail', 'Escribe tu correo electrónico.'); hasError = true; }
   if (hasError) { scrollToFirstError(); return; }
   session.signerName = name;
+  session.signerNameParts = nameParts;
   session.email = email;
 
   if (docMode === 'upload') {
@@ -373,7 +410,7 @@ $('#toStep1').addEventListener('click', async () => {
     }
     const base64 = await fileToBase64(uploadedFile);
     try {
-      await api('/upload', 'POST', { filename: uploadedFile.name, base64, signerName: name, email });
+      await api('/upload', 'POST', { filename: uploadedFile.name, base64, signerName: name, signerNameParts: nameParts, email });
     } catch (e) { showFormError('No se pudo subir tu documento: ' + e.message); return; }
     showStep(1);
     loadIdvMode();
@@ -403,7 +440,7 @@ $('#toStep1').addEventListener('click', async () => {
     }
     const releaseBtn = setPreparingState();
     try {
-      const { session: updated } = await api('/prepare-document', 'POST', { mode: 'template', templateId: selectedTemplateId, values, signerName: name, email });
+      const { session: updated } = await api('/prepare-document', 'POST', { mode: 'template', templateId: selectedTemplateId, values, signerName: name, signerNameParts: nameParts, email });
       session = updated;
     } catch (e) { showFormError('No se pudo generar el documento: ' + e.message); return; }
     finally { releaseBtn(); }
@@ -419,7 +456,7 @@ $('#toStep1').addEventListener('click', async () => {
     }
     const releaseBtn = setPreparingState();
     try {
-      const { session: updated } = await api('/prepare-document', 'POST', { mode: 'custom', titulo, cuerpo, lugar, signerName: name, email });
+      const { session: updated } = await api('/prepare-document', 'POST', { mode: 'custom', titulo, cuerpo, lugar, signerName: name, signerNameParts: nameParts, email });
       session = updated;
     } catch (e) { showFormError('No se pudo generar el documento: ' + e.message); return; }
     finally { releaseBtn(); }

@@ -103,6 +103,8 @@ async function migrate() {
     -- Programa de referidos (influencers). Ver "Referidos" más abajo y la
     -- nota junto a REFERRAL_DISCOUNT_CENTS en server.js.
     ALTER TABLE sessions ADD COLUMN IF NOT EXISTS referral JSONB;
+    -- Nombre del firmante separado (first/middle/last) para Proof.com.
+    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS signer_name_parts JSONB;
     CREATE TABLE IF NOT EXISTS referral_codes (
       code TEXT PRIMARY KEY,               -- siempre en MAYÚSCULAS
       influencer_name TEXT NOT NULL,
@@ -163,6 +165,7 @@ function rowToSession(r) {
     proof: r.proof || null,
     history: r.history || [],
     referral: r.referral || null,
+    signerNameParts: r.signer_name_parts || null,
   };
 }
 
@@ -226,8 +229,8 @@ async function getSessionByProofTransactionId(transactionId) {
 // abajo), que serializa el ciclo completo leer-modificar-guardar por sesión.
 async function saveSession(s, client) {
   await query(
-    `INSERT INTO sessions (id, created_at, signer_name, email, language, status, document, identity, payment, signature, notary_id, room_id, proof, history, referral)
-     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12,$13::jsonb,$14::jsonb,$15::jsonb)
+    `INSERT INTO sessions (id, created_at, signer_name, email, language, status, document, identity, payment, signature, notary_id, room_id, proof, history, referral, signer_name_parts)
+     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12,$13::jsonb,$14::jsonb,$15::jsonb,$16::jsonb)
      ON CONFLICT (id) DO UPDATE SET
        signer_name = EXCLUDED.signer_name,
        email = EXCLUDED.email,
@@ -241,7 +244,8 @@ async function saveSession(s, client) {
        room_id = EXCLUDED.room_id,
        proof = EXCLUDED.proof,
        history = EXCLUDED.history,
-       referral = EXCLUDED.referral`,
+       referral = EXCLUDED.referral,
+       signer_name_parts = EXCLUDED.signer_name_parts`,
     [
       s.id,
       s.createdAt || new Date().toISOString(),
@@ -258,6 +262,7 @@ async function saveSession(s, client) {
       s.proof != null ? JSON.stringify(s.proof) : null,
       JSON.stringify(s.history || []),
       s.referral != null ? JSON.stringify(s.referral) : null,
+      s.signerNameParts != null ? JSON.stringify(s.signerNameParts) : null,
     ],
     client
   );

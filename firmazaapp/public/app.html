@@ -45,10 +45,23 @@
         <button type="button" class="mode-tab" data-mode="referral"><span class="em">🤝</span>Es algo más personalizado</button>
       </div>
 
-      <div class="field" id="fieldSignerName">
-        <label>Nombre completo</label>
-        <input type="text" id="signerName" placeholder="Como aparece en tu identificación">
-        <span class="field-error" id="errSignerName"></span>
+      <p class="help">Escribe tu nombre exactamente como aparece en tu identificación.</p>
+      <div class="name-row">
+        <div class="field" id="fieldSignerFirst">
+          <label for="signerFirst">Nombre</label>
+          <input type="text" id="signerFirst" maxlength="30" autocomplete="given-name">
+          <span class="field-error" id="errSignerFirst"></span>
+        </div>
+        <div class="field" id="fieldSignerMiddle">
+          <label for="signerMiddle">Segundo nombre (opcional)</label>
+          <input type="text" id="signerMiddle" maxlength="30" autocomplete="additional-name">
+          <span class="field-error" id="errSignerMiddle"></span>
+        </div>
+        <div class="field" id="fieldSignerLast">
+          <label for="signerLast">Apellidos</label>
+          <input type="text" id="signerLast" maxlength="30" autocomplete="family-name">
+          <span class="field-error" id="errSignerLast"></span>
+        </div>
       </div>
       <div class="field" id="fieldSignerEmail">
         <label>Correo electrónico</label>
