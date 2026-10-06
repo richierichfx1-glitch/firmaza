@@ -78,6 +78,14 @@ async function proofFetch(url, { apiKey, method = 'GET', body } = {}) {
     return json;
 }
 
+// Proof coloca el botón naranja "Sign document now" ARRIBA del mensaje, así que
+// el texto no debe decir "botón de abajo"; el resto de la plantilla de Proof es solo en inglés.
+const DEFAULT_SIGNER_MESSAGE =
+  'Tu documento está listo para notarizar. Para empezar, pulsa el botón naranja "Sign document now" que aparece ARRIBA, al inicio de este correo (ese botón y las secciones en inglés de más abajo las genera Proof.com, nuestro proveedor de notarización). ' +
+  'Se abrirá una videollamada con un notario en línea; cuando entres, puedes pedir un notario que hable español. ' +
+  'Ten a la mano: tu identificación con foto vigente (licencia de conducir o pasaporte), los últimos 4 dígitos de tu Social Security o ITIN si tienes, y un dispositivo con cámara y micrófono (Chrome, Safari o Firefox) con buena conexión a internet. ' +
+  'Por seguridad, no reenvíes este correo.';
+
 /**
  * Crea una transacción de notarización real en Proof.com.
  * Devuelve `null` (modo demo) si PROOF_API_KEY no está configurada, igual que
@@ -117,7 +125,7 @@ async function createRonSession({ sessionId, signerName, signerEmail, signerPhon
         transaction_name: `Firmaza — ${signerName || signerEmail}`,
         transaction_type: 'Notarización remota (RON) — Firmaza',
         message_subject: subject || `${signerName ? signerName.split(/\s+/)[0] : 'Hola'}, tu documento de Firmaza está listo para notarizar`,
-        message_to_signer: message || 'Tu documento está listo. Haz clic en el botón de abajo para conectarte con un notario por video y completar la notarización. Cuando entres a la videollamada, puedes pedir un notario que hable español.',
+        message_to_signer: message || DEFAULT_SIGNER_MESSAGE,
         config_id: 'notarization',
         signers: [signer, ...extraSigners],
         documents: [{ resource: documentUrl, requirement: 'notarization' }],
