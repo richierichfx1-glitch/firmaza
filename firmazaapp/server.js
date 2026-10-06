@@ -752,13 +752,21 @@ function serveStatic(req, res, filePath) {
         data = Buffer.from(out, 'utf8');
       }
     }
-    // Caché del navegador: imágenes y fuentes por 30 días; CSS/JS por 1 hora
-    // (cambian seguido y no llevan versión en el nombre); HTML sin caché.
+    // Caché del navegador: imágenes y fuentes por 30 días; CSS/JS siempre se
+    // revalidan con ETag (un max-age de 1 hora hacía que los navegadores
+    // siguieran corriendo el app.js viejo tras un deploy, lo que rompía el
+    // regreso post-pago desde Square); HTML sin caché.
     const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream' };
     if (['.png', '.jpg', '.jpeg', '.webp', '.svg', '.ico', '.woff', '.woff2'].includes(ext)) {
       headers['Cache-Control'] = 'public, max-age=2592000';
     } else if (ext === '.css' || ext === '.js') {
-      headers['Cache-Control'] = 'public, max-age=3600';
+      const etag = '"' + crypto.createHash('sha1').update(data).digest('base64url') + '"';
+      headers['Cache-Control'] = 'no-cache';
+      headers['ETag'] = etag;
+      if (req.headers['if-none-match'] === etag) {
+        res.writeHead(304, headers);
+        return res.end();
+      }
     }
     res.writeHead(200, headers);
     res.end(data);
