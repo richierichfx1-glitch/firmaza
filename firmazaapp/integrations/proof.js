@@ -111,7 +111,8 @@ async function createRonSession({ sessionId, signerName, signerNameParts, signer
   const extraSigners = (additionalSigners || [])
     .filter((x) => x && x.email)
     .map((x) => {
-      const o = { email: x.email, ...splitName(x.name) };
+      const np = names.normalizeNameParts(x.nameParts);
+      const o = { email: x.email, ...(np && np.first && np.last ? names.toProofName(np) : splitName(x.name)) };
       if (x.phone) o.phone_number = x.phone;
       return o;
     });

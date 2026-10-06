@@ -275,7 +275,8 @@ function renderTemplateFields() {
   const notice = t.notice ? `<div class="template-notice">ℹ️ ${escapeHtml(t.notice)}</div>` : '';
   container.innerHTML = notice + t.fields.map((f) => {
     const req = f.required ? '' : ' <span class="hint" style="display:inline">(opcional)</span>';
-    const ph = f.placeholder ? ` placeholder="${f.placeholder.replace(/"/g, '&quot;')}"` : '';
+    const ph = (f.placeholder ? ` placeholder="${f.placeholder.replace(/"/g, '&quot;')}"` : '')
+      + (f.maxLength ? ` maxlength="${Number(f.maxLength)}"` : '');
     let inner;
     if (f.type === 'textarea') {
       inner = `<textarea rows="4" data-fkey="${f.key}"${ph}></textarea>`;
@@ -599,6 +600,14 @@ async function applyReuseIfRequested() {
     if (!res.ok) return; // no es tuyo, no existe, o no es reutilizable — empieza en blanco sin avisar error
     const data = await res.json();
     const inputs = data.inputs || {};
+    // Documentos viejos del permiso de viaje solo guardaron segundoNombre
+    // (texto libre): se adivina la separación para que el cliente la corrija.
+    if (inputs.segundoNombre && !inputs.segundoNombrePila && !inputs.segundoApellidos) {
+      const g = guessNameParts(inputs.segundoNombre);
+      inputs.segundoNombrePila = g.first;
+      inputs.segundoSegundoNombre = g.middle;
+      inputs.segundoApellidos = g.last;
+    }
 
     setDocMode('prepare');
     if (data.mode === 'template' && data.templateId) {
