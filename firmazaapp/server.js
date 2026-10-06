@@ -823,6 +823,27 @@ async function createSquarePaymentLink({ amountCents, description, redirectUrl }
 // pedido queda en state "COMPLETED" solo cuando Square registró el pago
 // completo; "OPEN" significa que todavía no se ha pagado.
 // Docs: https://developer.squareup.com/reference/square/orders-api/retrieve-order
+// Las órdenes de Square creadas por un Payment Link se quedan en estado OPEN
+// (pestaña "Activas" del dashboard) aunque estén totalmente pagadas, por lo que
+// exigir COMPLETED nunca detectaba pagos reales. Se considera pagada una orden
+// COMPLETED, o una OPEN cuyos tenders capturados cubren el total y sin saldo pendiente.
+function squareOrderIsPaid(order) {
+  if (!order) return false;
+  if (order.state === 'COMPLETED') return true;
+  if (order.state !== 'OPEN') return false;
+  const totalCents = order.total_money?.amount;
+  if (!(totalCents > 0)) return false;
+  const tenders = order.tenders || [];
+  if (!tenders.length) return false;
+  const tenderedCents = tenders.reduce((sum, t) => {
+    const cardStatus = t.card_details?.status;
+    const counts = !cardStatus || cardStatus === 'CAPTURED';
+    return sum + (counts ? (t.amount_money?.amount || 0) : 0);
+  }, 0);
+  const dueCents = order.net_amount_due_money?.amount;
+  return tenderedCents >= totalCents && (dueCents == null || dueCents === 0);
+}
+
 async function verifySquareOrderPaid(orderId, expectedAmountCents) {
   const token = process.env.SQUARE_ACCESS_TOKEN;
   if (!token || !orderId) return { paid: false, reason: 'sin_order_id' };
@@ -834,7 +855,7 @@ async function verifySquareOrderPaid(orderId, expectedAmountCents) {
   const json = await resp.json();
   if (!resp.ok) throw new Error(json.errors?.[0]?.detail || 'Error consultando la orden en Square');
   const order = json.order;
-  const paid = order?.state === 'COMPLETED';
+  const paid = squareOrderIsPaid(order);
   // Chequeo adicional de monto: la orden la creamos nosotros con un monto
   // fijo, así que esto es más una red de seguridad que una necesidad, pero
   // evita confiar ciegamente si algún día el monto se vuelve variable.
