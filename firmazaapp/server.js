@@ -1392,6 +1392,10 @@ async function handleApi(req, res, pathname, query) {
             const values = body.values || {};
             const lengthError = fieldsWithinLimit(values);
             if (lengthError) return send(res, 400, { error: lengthError });
+            // Permiso de viaje: arma values.segundoNombre desde los tres campos del
+            // otro firmante (el PDF usa ese texto) antes de validar y renderizar.
+            const secondNameError = docTemplates.applySecondSignerName(template.id, values);
+            if (secondNameError) return send(res, 400, secondNameError);
             const missing = docTemplates.validateValues(template, values);
             if (missing.length) {
               return send(res, 400, {

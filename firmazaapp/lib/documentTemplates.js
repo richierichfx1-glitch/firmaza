@@ -52,6 +52,8 @@
  * traducen aquí mismo sin llamar a la API (translateIdLocal).
  */
 
+const nameLib = require('./names');
+
 const LEGAL_DISCLAIMER =
   'AVISO LEGAL: Firmaza no es un despacho de abogados y no brinda asesoría ' +
   'legal. Este documento fue generado con el formato que tú elegiste y el ' +
@@ -249,7 +251,11 @@ const TEMPLATES = [
         ],
       },
       { key: 'padreAusenteNombre', label: 'Nombre del otro padre/madre/tutor (si no viaja ni firma esta carta)', type: 'text', required: false, placeholder: 'Ej. Ana Ramírez Torres', showIf: { segundoFirmante: 'no' } },
-      { key: 'segundoNombre', label: 'Nombre completo del otro padre/madre/tutor que firma', type: 'text', required: false, requiredIf: { segundoFirmante: 'si' }, showIf: { segundoFirmante: 'si' }, placeholder: 'Ej. Ana Gómez Silva' },
+      // Nombre del otro firmante en tres campos (Proof.com los pide separados);
+      // applySecondSignerName() los junta en values.segundoNombre, que es lo que usa el PDF.
+      { key: 'segundoNombrePila', label: 'Nombre del otro padre/madre/tutor que firma (como aparece en su identificación)', type: 'text', required: false, requiredIf: { segundoFirmante: 'si' }, showIf: { segundoFirmante: 'si' }, placeholder: 'Ej. Ana', maxLength: 30 },
+      { key: 'segundoSegundoNombre', label: 'Su segundo nombre (opcional)', type: 'text', required: false, showIf: { segundoFirmante: 'si' }, placeholder: 'Ej. María', maxLength: 30 },
+      { key: 'segundoApellidos', label: 'Sus apellidos', type: 'text', required: false, requiredIf: { segundoFirmante: 'si' }, showIf: { segundoFirmante: 'si' }, placeholder: 'Ej. Gómez Silva', maxLength: 30 },
       {
         key: 'segundoParentesco', label: 'Su parentesco con el menor', type: 'select', required: false, requiredIf: { segundoFirmante: 'si' }, showIf: { segundoFirmante: 'si' },
         options: [
@@ -414,12 +420,57 @@ const TEMPLATES = [
   },
 ];
 
+/** Permiso de viaje: arma values.segundoNombre (que usa el render del PDF) a
+ * partir de segundoNombrePila / segundoSegundoNombre / segundoApellidos. Modifica
+ * `values`. Compatibilidad: si solo viene segundoNombre (documento viejo o
+ * cliente viejo), separa ese texto para llenar los tres campos nuevos.
+ * Devuelve null si todo está bien o { error, missingFields } para un 400. */
+function applySecondSignerName(templateId, values) {
+  if (templateId !== 'consentimiento_viaje_menor' || !values || values.segundoFirmante !== 'si') return null;
+  let parts = nameLib.normalizeNameParts({
+    first: values.segundoNombrePila, middle: values.segundoSegundoNombre, last: values.segundoApellidos,
+  });
+  if (!parts && String(values.segundoNombre || '').trim()) {
+    parts = nameLib.normalizeNameParts(nameLib.splitFullName(values.segundoNombre));
+    if (parts) {
+      values.segundoNombrePila = parts.first;
+      values.segundoSegundoNombre = parts.middle;
+      values.segundoApellidos = parts.last;
+    }
+  }
+  if (!parts) return null; // sin nombre: validateValues() reporta los campos obligatorios
+  const error = nameLib.validateNameParts(parts);
+  if (error) {
+    const key = !parts.first ? 'segundoNombrePila'
+      : !parts.last ? 'segundoApellidos'
+      : parts.first.length > nameLib.MAX_NAME_PART_LENGTH ? 'segundoNombrePila'
+      : parts.middle.length > nameLib.MAX_NAME_PART_LENGTH ? 'segundoSegundoNombre'
+      : 'segundoApellidos';
+    const field = getTemplate(templateId).fields.find((f) => f.key === key);
+    return { error: `Otro firmante: ${error.replace('Escribe tu ', 'Escribe su ').replace('Escribe tus ', 'Escribe sus ')}`, missingFields: [{ key, label: field ? field.label : key }] };
+  }
+  values.segundoNombrePila = parts.first;
+  values.segundoSegundoNombre = parts.middle;
+  values.segundoApellidos = parts.last;
+  values.segundoNombre = nameLib.joinNameParts(parts);
+  return null;
+}
+
 /** Firmantes adicionales que hay que invitar a Proof.com además del
  * firmante principal de la sesión (hoy: el segundo padre/madre del permiso de
  * viaje). Devuelve [{ name, email, phone }]. */
 function additionalSigners(templateId, values) {
-  if (templateId === 'consentimiento_viaje_menor' && values?.segundoFirmante === 'si' && values.segundoNombre && values.segundoCorreo) {
-    return [{ name: values.segundoNombre, email: String(values.segundoCorreo).trim(), phone: values.segundoTelefono || '' }];
+  if (templateId === 'consentimiento_viaje_menor' && values?.segundoFirmante === 'si' && values.segundoCorreo) {
+    const nameParts = nameLib.normalizeNameParts({
+      first: values.segundoNombrePila, middle: values.segundoSegundoNombre, last: values.segundoApellidos,
+    });
+    // Documentos viejos solo traen segundoNombre (texto libre); sin nameParts
+    // proof.js lo separa con splitName.
+    const name = values.segundoNombre || nameLib.joinNameParts(nameParts);
+    if (!name) return [];
+    const out = { name, email: String(values.segundoCorreo).trim(), phone: values.segundoTelefono || '' };
+    if (nameParts && nameParts.first && nameParts.last) out.nameParts = nameParts;
+    return [out];
   }
   return [];
 }
@@ -484,5 +535,5 @@ module.exports = {
   listTemplates, getTemplate, validateValues, renderCustomLetter, LEGAL_DISCLAIMER,
   // Idiomas
   ALWAYS_BILINGUAL, REVIEW_FIELDS, fieldsToTranslate, translateIdLocal, formatDate,
-  additionalSigners,
+  additionalSigners, applySecondSignerName,
 };
