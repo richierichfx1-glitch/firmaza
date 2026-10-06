@@ -65,9 +65,25 @@ async function ensureSession() {
 // real (ver `redirectUrl` en server.js). Sin esto, ensureSession() de
 // arriba siempre creaba una sesión nueva y el firmante perdía su documento
 // y sus datos ya capturados — quedaba "atorado" justo después de pagar.
+// El id puede venir de tres lugares, en este orden: el hash (#/pagar-exito/ID),
+// la query (?pagado=ID — sobrevive aunque Square descarte el hash) o, como
+// último recurso, el id que guardamos en localStorage justo antes de mandar
+// al firmante a Square (por si Square descartó TODA la URL de regreso).
+const PENDING_PAYMENT_KEY = 'firmaza_pending_payment';
 function getResumeSessionIdFromHash() {
   const m = location.hash.match(/^#\/pagar-exito\/([^/?]+)/);
-  return m ? m[1] : null;
+  if (m) return m[1];
+  const q = new URLSearchParams(location.search).get('pagado');
+  if (q && /^[a-f0-9]+$/.test(q)) return q;
+  try {
+    const saved = JSON.parse(localStorage.getItem(PENDING_PAYMENT_KEY) || 'null');
+    // Solo si lo guardamos hace poco (2 h) — no resucitar sesiones viejas.
+    if (saved && /^[a-f0-9]+$/.test(saved.id) && Date.now() - saved.at < 2 * 60 * 60 * 1000) return saved.id;
+  } catch { /* localStorage no disponible */ }
+  return null;
+}
+function clearPendingPayment() {
+  try { localStorage.removeItem(PENDING_PAYMENT_KEY); } catch { /* ignorar */ }
 }
 
 // Antes mostrábamos aquí el ID interno de la sesión (ej. "Sesión a4f24c") —
@@ -83,12 +99,13 @@ function markSessionPillLive() {
 async function tryResumeSession(id) {
   try {
     const res = await fetch(`/api/sessions/${id}`);
-    if (!res.ok) return false;
+    if (!res.ok) { clearPendingPayment(); return false; }
     const data = await res.json();
     session = data.session;
     markSessionPillLive();
-    // Limpiamos el hash para que un refresh no vuelva a disparar todo esto.
-    history.replaceState(null, '', location.pathname + location.search);
+    // Limpiamos hash y query (?pagado=, y lo que Square agregue) para que un
+    // refresh no vuelva a disparar todo esto desde cero.
+    history.replaceState(null, '', location.pathname);
     await resumeAfterPayment();
     return true;
   } catch {
@@ -115,8 +132,15 @@ async function resumeAfterPayment() {
         break;
       } catch (e) {
         if (attempt === maxAttempts) {
+          // Antes solo se escribía el aviso en #paymentNote (que vive en el
+          // paso 2, oculto) y la pantalla se quedaba en el paso 0 — el
+          // firmante veía otra vez "sube tu documento" sin ninguna
+          // explicación. Ahora lo llevamos al paso de pago, con el aviso
+          // visible y el botón para reintentar.
           $('#paymentNote').textContent =
-            'Todavía no confirmamos tu pago con Square. Si ya pagaste, espera un momento y recarga esta página; si el problema sigue, contáctanos.';
+            'Todavía no confirmamos tu pago con Square. Si ya pagaste, NO vuelvas a pagar: espera un momento y recarga esta página (tu sesión se conserva); si el problema sigue, contáctanos.';
+          if (typeof renderPriceSummary === 'function') { try { renderPriceSummary(); } catch (_) {} }
+          showStep(2);
           return;
         }
         await new Promise((r) => setTimeout(r, 1500));
@@ -124,6 +148,7 @@ async function resumeAfterPayment() {
     }
   }
   $('#paymentNote').textContent = 'Pago procesado de forma segura con Square.';
+  clearPendingPayment(); // ya confirmado — no hace falta seguir recordándolo
   routeToCurrentStatus();
 }
 
@@ -723,6 +748,9 @@ $('#toStep3').addEventListener('click', async () => {
       session = data.session;
       startNotarization();
     } else if (data.url) {
+      // Recordamos la sesión antes de salir: si Square no nos devuelve ni el
+      // hash ni la query, /app todavía puede retomar el pago al regresar.
+      try { localStorage.setItem(PENDING_PAYMENT_KEY, JSON.stringify({ id: session.id, at: Date.now() })); } catch (_) {}
       window.location.href = data.url; // Square Checkout real
       return; // dejamos el botón deshabilitado — estamos navegando fuera de la página
     }
