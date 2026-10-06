@@ -1564,7 +1564,13 @@ async function handleApi(req, res, pathname, query) {
           const result = await createSquarePaymentLink({
             amountCents,
             description: item.description,
-            redirectUrl: `${origin}/app#/pagar-exito/${id}`,
+            // El id va en la query (?pagado=) Y en el hash: Square puede
+            // descartar o reescribir el fragmento (#...) al redirigir de
+            // regreso, y entonces el firmante caía en /app sin ninguna pista
+            // de su sesión — se creaba una sesión nueva y volvía a la pantalla
+            // de subir documento (sin confirmar el pago ni mandar el correo
+            // de Proof.com). La query sí sobrevive.
+            redirectUrl: `${origin}/app?pagado=${id}#/pagar-exito/${id}`,
           });
           if (result.demo) {
             s.payment = { mode: 'demo', amount: amountCents / 100, paidAt: new Date().toISOString() };
