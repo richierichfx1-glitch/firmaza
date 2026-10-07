@@ -191,6 +191,24 @@ async function registerWebhook(webhookUrl, subscriptions) {
 }
 
 /**
+ * Registra el webhook de Proof solo si no existe ya uno para `webhookUrl`.
+ * Se llama al arrancar el servidor, así cambiar PROOF_API_KEY a otra
+ * organización no requiere ninguna llamada manual. Nunca lanza excepciones.
+ */
+async function ensureWebhook(webhookUrl) {
+    const apiKey = process.env.PROOF_API_KEY;
+    if (!apiKey) return { skipped: 'sin PROOF_API_KEY' };
+    try {
+        const existing = await listWebhooks();
+        if (JSON.stringify(existing || {}).includes(webhookUrl)) return { skipped: 'ya registrado' };
+        await registerWebhook(webhookUrl);
+        return { registered: true };
+    } catch (e) {
+        return { error: e.message };
+    }
+}
+
+/**
  * Verifica la firma HMAC-SHA256 que Proof manda en el header
  * `X-Notarize-Signature` (usa la propia API key como llave de firma por
  * defecto). Regresa `true`/`false`. Requiere el cuerpo RAW (string, antes de
@@ -208,4 +226,4 @@ function verifyWebhookSignature(rawBody, signatureHeader) {
     }
 }
 
-module.exports = { createRonSession, getTransactionStatus, registerWebhook, listWebhooks, verifyWebhookSignature };
+module.exports = { createRonSession, getTransactionStatus, registerWebhook, listWebhooks, ensureWebhook, verifyWebhookSignature };
