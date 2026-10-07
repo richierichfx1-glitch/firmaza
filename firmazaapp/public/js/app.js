@@ -840,6 +840,7 @@ function showProofHandoff() {
   $('#toStep4').style.display = 'none';
   // Muestra la guía para pedir un notario hispanohablante en Proof
   const esGuide = $('#spanishGuide'); if (esGuide) esGuide.style.display = '';
+  const esCallout = $('#spanishCallout'); if (esCallout) esCallout.style.display = '';
   $('#callStatus').classList.remove('live');
   $('#callStatus').textContent =
     `Te enviamos un correo a ${session.email} (y SMS si dejaste teléfono) para conectarte por video con un notario y completar tu notarización. En la pantalla de la reunión, antes de unirte, elige "Comunícate con un notario hispanohablante" para que te atienda alguien en español. Puedes dejar esta pestaña abierta — se actualizará sola.`;

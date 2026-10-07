@@ -509,3 +509,9 @@ details[open] .nucleo-toggle .chev{transform:rotate(180deg)}
   .es-mock{grid-template-columns:1fr}
   .es-mock-video{display:none}
 }
+.es-callout{margin:16px 0 4px;padding:16px 18px;border:2px solid var(--coral);border-radius:var(--radius);background:#fff7f4;color:#14171f;text-align:left}
+.es-callout-title{display:block;font-size:17px;margin-bottom:6px;color:var(--teal)}
+.es-callout p{margin:0 0 8px;font-size:15px}
+.es-callout-action{font-size:16px}
+.es-callout-chip{display:inline-block;background:var(--coral);color:#fff;font-weight:700;border-radius:8px;padding:3px 10px;line-height:1.5}
+.es-callout-small{font-size:13px;color:#4b5262;margin-bottom:0!important}

@@ -78,8 +78,9 @@ async function proofFetch(url, { apiKey, method = 'GET', body } = {}) {
 // Proof coloca el botón naranja "Sign document now" ARRIBA del mensaje, así que
 // el texto no debe decir "botón de abajo"; el resto de la plantilla de Proof es solo en inglés.
 const DEFAULT_SIGNER_MESSAGE =
-  'Tu documento está listo para notarizar. Para empezar, pulsa el botón naranja "Sign document now" que aparece ARRIBA, al inicio de este correo (ese botón y las secciones en inglés de más abajo las genera Proof.com, nuestro proveedor de notarización). ' +
-  'IMPORTANTE para que te atienda un notario en español: en la pantalla de la reunión, ANTES de unirte, elige la opción "Comunícate con un notario hispanohablante". Si de todos modos te toca un notario que solo habla inglés, pídele que cierre la sesión y vuelve a pedir uno en español con esa misma opción. ' +
+  '**IMPORTANTE — PARA QUE TE ATIENDA UN NOTARIO QUE HABLE ESPAÑOL:** cuando entres a la reunión, en la pantalla "Ready to meet?" y ANTES de iniciar, pulsa el enlace **"Comunícate con un notario hispanohablante"**. NO pulses "Start meeting" primero: si lo haces, es posible que te toque un notario que solo habla inglés. ' +
+  'Si te toca uno que solo habla inglés, pídele que cierre la sesión, vuelve a la pantalla de inicio y pulsa de nuevo "Comunícate con un notario hispanohablante".\n\n' +
+  'Tu documento está listo para notarizar. Para empezar, pulsa el botón naranja "Sign document now" que aparece ARRIBA, al inicio de este correo (ese botón y las secciones en inglés de más abajo las genera Proof.com, nuestro proveedor de notarización).\n\n' +
   'Ten a la mano: tu identificación con foto vigente (licencia de conducir o pasaporte), los últimos 4 dígitos de tu Social Security o ITIN si tienes, y un dispositivo con cámara y micrófono (Chrome, Safari o Firefox) con buena conexión a internet. ' +
   'Por seguridad, no reenvíes este correo.';
 
