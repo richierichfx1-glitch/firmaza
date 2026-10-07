@@ -2371,6 +2371,11 @@ db.migrate()
       console.log(`Firmaza corriendo en http://localhost:${PORT}`);
       console.log(process.env.SQUARE_ACCESS_TOKEN ? 'Square: modo real' : 'Square: modo demo (sin SQUARE_ACCESS_TOKEN)');
       console.log(process.env.RESEND_API_KEY ? 'Correo (enlaces mágicos): modo real' : 'Correo (enlaces mágicos): modo demo (sin RESEND_API_KEY, el enlace se imprime aquí en la consola)');
+      // Registra el webhook de Proof al arrancar (no hace nada si ya existe).
+      if (process.env.PROOF_API_KEY) {
+        const origin = (process.env.PUBLIC_ORIGIN || 'https://firmaza.com').trim().replace(/\/$/, '');
+        proofRon.ensureWebhook(`${origin}/webhooks/proof`).then((r) => console.log('Proof.com webhook:', JSON.stringify(r))).catch((e) => console.error('Proof.com webhook:', e.message));
+      }
     });
   })
   .catch((e) => {
