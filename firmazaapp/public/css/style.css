@@ -487,3 +487,25 @@ details[open] .nucleo-toggle .chev{transform:rotate(180deg)}
 .guide-related h2{font-size:21px;margin:0 0 16px}
 @media (max-width:880px){.home-guides{grid-template-columns:1fr 1fr}}
 @media (max-width:520px){.home-guides{grid-template-columns:1fr}}
+
+/* La maqueta imita una interfaz externa (Proof), por eso usa colores fijos */
+.es-guide{background:var(--bg);border:1px solid var(--line);border-radius:var(--radius);padding:22px;text-align:left}
+.es-guide h3{margin:0 0 6px;font-size:19px}
+.es-guide-lead{margin:0 0 12px;color:var(--ink-soft);font-size:15px}
+.es-steps{margin:0 0 18px;padding-left:22px;display:grid;gap:10px;font-size:15px;line-height:1.5}
+.es-steps li::marker{font-weight:700;color:var(--coral)}
+.es-guide-note{margin:16px 0 0;font-size:14px;color:var(--ink-soft)}
+.es-mock{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:16px;align-items:center;background:#fff;color:#14171f;border:1px solid #d9dde5;border-radius:12px;padding:16px}
+.es-mock-video{aspect-ratio:4/3;border-radius:10px;background:#c9ced8;display:flex;align-items:center;justify-content:center;font-size:13px;color:#4b5262}
+.es-mock-panel{display:grid;gap:8px;justify-items:start}
+.es-mock-title{font-size:20px;font-weight:700}
+.es-mock-sub{font-size:14px;color:#4b5262}
+.es-mock-btn{width:100%;background:#0b45f0;color:#fff;border-radius:8px;padding:10px 12px;font-size:14px;font-weight:600;text-align:center;opacity:.55}
+.es-mock-no{display:block;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;margin-top:2px}
+.es-mock-link{width:100%;text-align:center;color:#0b45f0;font-size:15px;font-weight:700;border:3px solid var(--coral);border-radius:10px;padding:9px 8px;background:#fff7f4}
+.es-mock-tag{justify-self:center;background:var(--coral);color:#fff;font-size:13px;font-weight:700;border-radius:999px;padding:4px 12px}
+@media (max-width:560px){
+  .es-guide{padding:16px}
+  .es-mock{grid-template-columns:1fr}
+  .es-mock-video{display:none}
+}
