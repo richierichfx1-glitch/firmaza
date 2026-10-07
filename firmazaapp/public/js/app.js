@@ -842,7 +842,7 @@ function showProofHandoff() {
   const esGuide = $('#spanishGuide'); if (esGuide) esGuide.style.display = '';
   $('#callStatus').classList.remove('live');
   $('#callStatus').textContent =
-    `Te enviamos un correo a ${session.email} (y SMS si dejaste teléfono) para conectarte por video con un notario y completar tu notarización. Puedes dejar esta pestaña abierta — se actualizará sola.`;
+    `Te enviamos un correo a ${session.email} (y SMS si dejaste teléfono) para conectarte por video con un notario y completar tu notarización. En la pantalla de la reunión, antes de unirte, elige "Comunícate con un notario hispanohablante" para que te atienda alguien en español. Puedes dejar esta pestaña abierta — se actualizará sola.`;
   pollProofStatus();
 }
 

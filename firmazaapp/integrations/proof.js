@@ -79,7 +79,7 @@ async function proofFetch(url, { apiKey, method = 'GET', body } = {}) {
 // el texto no debe decir "botón de abajo"; el resto de la plantilla de Proof es solo en inglés.
 const DEFAULT_SIGNER_MESSAGE =
   'Tu documento está listo para notarizar. Para empezar, pulsa el botón naranja "Sign document now" que aparece ARRIBA, al inicio de este correo (ese botón y las secciones en inglés de más abajo las genera Proof.com, nuestro proveedor de notarización). ' +
-  'Se abrirá una videollamada con un notario en línea; cuando entres, puedes pedir un notario que hable español. ' +
+  'IMPORTANTE para que te atienda un notario en español: en la pantalla de la reunión, ANTES de unirte, elige la opción "Comunícate con un notario hispanohablante". Si de todos modos te toca un notario que solo habla inglés, pídele que cierre la sesión y vuelve a pedir uno en español con esa misma opción. ' +
   'Ten a la mano: tu identificación con foto vigente (licencia de conducir o pasaporte), los últimos 4 dígitos de tu Social Security o ITIN si tienes, y un dispositivo con cámara y micrófono (Chrome, Safari o Firefox) con buena conexión a internet. ' +
   'Por seguridad, no reenvíes este correo.';
 
