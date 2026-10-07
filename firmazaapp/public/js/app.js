@@ -838,6 +838,8 @@ async function startNotarization() {
 function showProofHandoff() {
   document.querySelector('.video-wrap').style.display = 'none';
   $('#toStep4').style.display = 'none';
+  // Muestra la guía para pedir un notario hispanohablante en Proof
+  const esGuide = $('#spanishGuide'); if (esGuide) esGuide.style.display = '';
   $('#callStatus').classList.remove('live');
   $('#callStatus').textContent =
     `Te enviamos un correo a ${session.email} (y SMS si dejaste teléfono) para conectarte por video con un notario y completar tu notarización. Puedes dejar esta pestaña abierta — se actualizará sola.`;
