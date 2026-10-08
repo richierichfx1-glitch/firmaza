@@ -841,6 +841,7 @@ function showProofHandoff() {
   // Muestra la guía para pedir un notario hispanohablante en Proof
   const esGuide = $('#spanishGuide'); if (esGuide) esGuide.style.display = '';
   const esCallout = $('#spanishCallout'); if (esCallout) esCallout.style.display = '';
+  const step3Help = $('#step3Help'); if (step3Help) step3Help.textContent = 'Revisa tu correo (y la carpeta de spam) y sigue los pasos de arriba. Cuando entres a la reunión de Proof te pedirá permiso para usar tu cámara y micrófono: acéptalo.';
   $('#callStatus').classList.remove('live');
   $('#callStatus').textContent =
     `Te enviamos un correo a ${session.email} (y SMS si dejaste teléfono) para conectarte por video con un notario y completar tu notarización. En la pantalla de la reunión, antes de unirte, elige "Comunícate con un notario hispanohablante" para que te atienda alguien en español. Puedes dejar esta pestaña abierta — se actualizará sola.`;
