@@ -515,3 +515,29 @@ details[open] .nucleo-toggle .chev{transform:rotate(180deg)}
 .es-callout-action{font-size:16px}
 .es-callout-chip{display:inline-block;background:var(--coral);color:#fff;font-weight:700;border-radius:8px;padding:3px 10px;line-height:1.5}
 .es-callout-small{font-size:13px;color:#4b5262;margin-bottom:0!important}
+
+/* Paso 4 (Proof): aviso de pago recibido */
+.fz-status{display:flex;gap:14px;align-items:flex-start;background:#eef7f1;border:1px solid #cfe7d8;border-radius:14px;padding:16px 18px;margin:4px 0 22px;text-align:left}
+.fz-check{flex:0 0 36px;height:36px;border-radius:50%;background:#1f8a5b;display:grid;place-items:center}
+.fz-status-title{display:block;font-size:17px;color:#14432f;margin:2px 0 4px}
+.fz-status #callStatus{all:unset;display:block;font-family:var(--font-body,"Work Sans",sans-serif);font-size:14.5px;line-height:1.5;color:#2f4f40}
+.fz-wait{display:inline-flex;align-items:center;gap:8px;margin-top:8px;font-size:12.5px;font-weight:600;color:#1f8a5b;text-transform:uppercase;letter-spacing:.04em}
+.fz-dot{width:8px;height:8px;border-radius:50%;background:#1f8a5b;animation:fzp 1.6s infinite}
+@keyframes fzp{0%{box-shadow:0 0 0 0 rgba(31,138,91,.5)}70%{box-shadow:0 0 0 8px rgba(31,138,91,0)}100%{box-shadow:0 0 0 0 rgba(31,138,91,0)}}
+@media (prefers-reduced-motion:reduce){.fz-dot{animation:none}}
+
+/* Paso 4 (Proof): guía en español */
+.es-guide{background:#fff;border-color:#f0ddd3;border-radius:16px;padding:26px 26px 22px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.es-guide h3{font-size:21px;display:flex;align-items:center;flex-wrap:wrap;gap:10px}
+.fz-badge{font-family:var(--font-body,"Work Sans",sans-serif);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;background:var(--coral);color:#fff;padding:4px 9px;border-radius:999px}
+.es-guide-lead{margin:0 0 18px}
+.es-steps{list-style:none;padding:0;margin:0 0 20px;counter-reset:fz}
+.es-steps li{counter-increment:fz;position:relative;padding:12px 14px 12px 56px;background:#fdf6f2;border-radius:12px}
+.es-steps li::before{content:counter(fz);position:absolute;left:14px;top:12px;width:28px;height:28px;border-radius:50%;background:var(--coral);color:#fff;font-weight:700;font-size:14px;display:grid;place-items:center}
+.es-mock-label{margin:0 0 8px;font-size:11.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#a08a7e}
+.es-mock{border:1px dashed #e3c9bc;border-radius:14px;background:#fffdfb}
+.es-guide-note{display:flex;gap:10px;background:#fff8e6;border:1px solid #f3e0a8;border-radius:12px;padding:12px 14px;margin:18px 0 0;color:#5c4a14}
+.es-guide-note::before{content:"!";flex:0 0 22px;height:22px;border-radius:50%;background:#e0a91b;color:#fff;font-weight:700;display:grid;place-items:center;font-size:13px}
+.card p.help.fz-tip{display:flex;gap:10px;align-items:flex-start;margin:18px 2px 0;font-size:13.5px}
+.card p.help.fz-tip::before{content:"i";flex:0 0 20px;height:20px;border-radius:50%;border:1.5px solid #b9aea6;color:#8a7f78;font-weight:700;font-size:12px;display:grid;place-items:center;font-family:Georgia,serif;font-style:italic}
+@media (max-width:600px){.es-guide{padding:20px 16px}}
