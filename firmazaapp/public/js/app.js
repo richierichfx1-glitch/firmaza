@@ -841,10 +841,17 @@ function showProofHandoff() {
   // Muestra la guía para pedir un notario hispanohablante en Proof
   const esGuide = $('#spanishGuide'); if (esGuide) esGuide.style.display = '';
   const esCallout = $('#spanishCallout'); if (esCallout) esCallout.style.display = '';
-  const step3Help = $('#step3Help'); if (step3Help) step3Help.textContent = 'Revisa tu correo (y la carpeta de spam) y sigue los pasos de arriba. Cuando entres a la reunión de Proof te pedirá permiso para usar tu cámara y micrófono: acéptalo.';
+  const step3Help = $('#step3Help'); if (step3Help) {
+    step3Help.textContent = 'Revisa tu correo (y la carpeta de spam). Cuando entres a la reunión de Proof te pedirá permiso para usar tu cámara y micrófono: acéptalo.';
+    step3Help.classList.add('fz-tip');
+    if (esGuide) esGuide.after(step3Help);
+  }
+  // El estado va dentro del aviso verde de "Pago recibido"
+  const slot = $('#proofStatusSlot'); if (slot) slot.appendChild($('#callStatus'));
+  const callWrap = $('#callStatusWrap'); if (callWrap) callWrap.style.display = 'none';
   $('#callStatus').classList.remove('live');
   $('#callStatus').textContent =
-    `Te enviamos un correo a ${session.email} (y SMS si dejaste teléfono) para conectarte por video con un notario y completar tu notarización. En la pantalla de la reunión, antes de unirte, elige "Comunícate con un notario hispanohablante" para que te atienda alguien en español. Puedes dejar esta pestaña abierta — se actualizará sola.`;
+    `Te enviamos un correo a ${session.email} (y SMS si dejaste teléfono) con el enlace para tu videollamada con el notario. Puedes dejar esta pestaña abierta: se actualizará sola.`;
   pollProofStatus();
 }
 
@@ -859,6 +866,7 @@ async function pollProofStatus() {
       return;
     }
     if (session.status === 'notarizacion_rechazada') {
+      const wait = $('#proofWait'); if (wait) wait.style.display = 'none';
       $('#callStatus').textContent = 'La notarización no se pudo completar. Contáctanos para más información.';
       return;
     }
