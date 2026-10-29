@@ -149,7 +149,34 @@ async function resumeAfterPayment() {
   }
   $('#paymentNote').textContent = 'Pago procesado de forma segura con Square.';
   clearPendingPayment(); // ya confirmado — no hace falta seguir recordándolo
+  trackMetaPurchase();
   routeToCurrentStatus();
+}
+
+// Evento "Purchase" del píxel de Meta, una sola vez por sesión pagada con
+// Square (nunca en modo demo). El píxel no está en /app desde el inicio: se
+// carga aquí, cuando la URL ya se limpió con replaceState, y solo manda el
+// monto — ni el documento, ni el nombre, ni el correo. Ver js/meta-pixel.js.
+function trackMetaPurchase() {
+  try {
+    const pay = session && session.payment;
+    if (!pay || pay.mode === 'demo' || !pay.paidAt) return;
+    const key = `firmaza_px_purchase_${session.id}`;
+    try {
+      if (localStorage.getItem(key)) return; // ya se registró (p. ej. al recargar)
+      localStorage.setItem(key, '1');
+    } catch (_) { /* sin localStorage: se registra igual */ }
+    const value = Number(pay.amount) || 39;
+    window.FIRMAZA_PIXEL_NO_PAGEVIEW = true;
+    const s = document.createElement('script');
+    s.src = '/js/meta-pixel.js';
+    s.onload = () => {
+      try {
+        window.fbq && window.fbq('track', 'Purchase', { value, currency: 'USD', content_name: 'Notarización online' });
+      } catch (_) { /* nunca romper el flujo de notarización */ }
+    };
+    document.head.appendChild(s);
+  } catch (_) { /* nunca romper el flujo de notarización */ }
 }
 
 function routeToCurrentStatus() {
