@@ -1014,7 +1014,7 @@ async function maybeShowAccountCta() {
   } catch {
     return; // si falla la consulta, no mostramos el CTA en vez de arriesgar un error visible
   }
-  $('#accountCtaEmail').textContent = session.email || '';
+  $('#accountCtaEmail').textContent = session.email || 'tu correo';
   $('#accountCtaForm').style.display = '';
   $('#accountCtaSent').style.display = 'none';
   const err = $('#accountCtaError');
