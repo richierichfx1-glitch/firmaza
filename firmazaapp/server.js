@@ -2355,6 +2355,16 @@ const server = http.createServer(async (req, res) => {
     if (fs.existsSync(guiaPath)) return serveStatic(req, res, guiaPath);
   }
 
+  // Blog en español (SEO): /blog y /blog/<slug> sin la extensión .html
+  if (pathname === '/blog' || pathname === '/blog/') {
+    return serveStatic(req, res, path.join(PUBLIC_DIR, 'blog', 'index.html'));
+  }
+  const post = pathname.match(/^\/blog\/([a-z0-9-]+)\/?$/);
+  if (post) {
+    const postPath = path.join(PUBLIC_DIR, 'blog', post[1] + '.html');
+    if (fs.existsSync(postPath)) return serveStatic(req, res, postPath);
+  }
+
   // Archivos estáticos (css/js/imágenes)
   const staticPath = path.join(PUBLIC_DIR, pathname);
   if (staticPath.startsWith(PUBLIC_DIR) && fs.existsSync(staticPath) && fs.statSync(staticPath).isFile()) {
